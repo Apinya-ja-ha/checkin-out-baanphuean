@@ -6,10 +6,6 @@ google-auth-oauthlib==1.1.0
 google-auth-httplib2==0.2.0
 python-dotenv==1.0.0
 pytz==2023.3
-zoneinfo-backport==0.2.1; python_version < '3.9'
-matplotlib==3.9.0
-numpy==1.26.4
 apscheduler==3.10.4
 gunicorn==21.2.0
 anthropic==0.7.1
-aiohttp>=4.0.0
