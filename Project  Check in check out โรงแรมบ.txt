@@ -1,0 +1,9 @@
+Project  Check in /check out โรงแรมบ้านเพื่อนรีสอร์ท
+
+Line
+
+Channel ID：2010363290
+
+Channel secret ：84adb5efe050b50dbf17a3537b279d7e
+
+Channel access token (long-lived) ：a6NkmqORVclsLSR6xOcFK0vmP/XC8cY4nE5BZFdYn/RqEIdwU5Y3+h9bglRPbvO9G+ZEXHLHd629zR3V+XUcBKzS/L1JeEKiPRoXAxRdvHuC39z83OBhO0SUSyFQpti2p5WihblXKltqxPBgoCDFWgdB04t89/1O/w1cDnyilFU=
