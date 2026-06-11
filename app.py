@@ -434,6 +434,9 @@ def handle_message(event):
     text = event.message.text.strip()
     lower_text = text.lower()
 
+    # Log incoming message for User ID tracking
+    print(f"[MESSAGE] User: {user_id} | Text: {text}")
+
     # Get current session state
     session = user_sessions.get(user_id, {})
     current_step = session.get("step")
