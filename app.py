@@ -437,6 +437,11 @@ def handle_message(event):
     # Log incoming message for User ID tracking
     print(f"[MESSAGE] User: {user_id} | Text: {text}")
 
+    # ── ID lookup shortcut ─────────────────────────────────────────
+    if text.lower() in ["/id", "id", "ไอดี", "ID"]:
+        _reply(event, f"🆔 Your User ID:\n{user_id}")
+        return
+
     # Get current session state
     session = user_sessions.get(user_id, {})
     current_step = session.get("step")
