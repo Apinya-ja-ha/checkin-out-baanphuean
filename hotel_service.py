@@ -43,9 +43,29 @@ class HotelSheetService:
 
             gc = gspread.authorize(creds)
             self.sheet = gc.open_by_key(self.sheet_id)
+            self._ensure_headers()
         except Exception as e:
             print(f"❌ Failed to authenticate with Google Sheets: {e}")
             self.sheet = None
+
+    def _ensure_headers(self):
+        """Insert headers into sheets if missing. Runs on startup."""
+        for title, headers in [("CheckIns", self.CHECKINS_HEADERS), ("Notes", self.NOTES_HEADERS)]:
+            try:
+                try:
+                    ws = self.sheet.worksheet(title)
+                except gspread.exceptions.WorksheetNotFound:
+                    ws = self.sheet.add_worksheet(title=title, rows=1000, cols=20)
+
+                first_row = ws.row_values(1)
+                has_header = first_row and "Timestamp" in str(first_row[0])
+                if not has_header:
+                    ws.insert_row(headers, 1)
+                    print(f"[OK] Headers inserted into {title}")
+                else:
+                    print(f"[OK] {title} headers already exist")
+            except Exception as e:
+                print(f"[WARN] Could not setup {title} headers: {e}")
 
     CHECKINS_HEADERS = [
         "Timestamp(System)", "Room#", "Type(ค้างคืน/ชั่วคราว)",
