@@ -823,13 +823,85 @@ def _save_maid_record(event, user_id, room, done_time):
     _clear_session(user_id)
 
 
+def _ai_process_note(text):
+    """Ask Claude to parse a free-text staff note. Returns dict or None."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic, json as _json
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = f"""วิเคราะห์ข้อความจาก staff โรงแรม ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น
+
+ข้อความ: "{text}"
+
+ตอบในรูปแบบนี้เท่านั้น:
+{{
+  "category": "maid_done หรือ maintenance หรือ info หรือ other",
+  "room": "เลขห้อง 3 หลัก เช่น 101 หรือ null",
+  "time": "HH:MM หรือ null",
+  "summary": "สรุป 1 ประโยคภาษาไทย",
+  "auto_checkout": true หรือ false
+}}
+
+กฎ:
+- maid_done = ทำห้องเสร็จ / ทำความสะอาดเสร็จ / เก็บห้องเสร็จ
+- maintenance = ซ่อม / แอร์ / น้ำ / ไฟ / อุปกรณ์เสีย
+- auto_checkout = true เฉพาะ maid_done + มีเลขห้อง
+- room: 1→101, 15→115 (แปลงเป็น 3 หลักเสมอ)"""
+
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            return _json.loads(m.group())
+    except Exception as e:
+        print(f"[WARN] Claude AI error: {e}")
+    return None
+
+
 def handle_other_note_step(event, user_id, text):
-    """Free-text note."""
-    result = hotel_service.record_note(text, note_type="Other")
-    if "error" in result:
-        _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
+    """Free-text note — process with Claude AI, fallback to plain save."""
+    parsed = _ai_process_note(text)
+
+    if parsed:
+        category  = parsed.get("category", "other")
+        room      = parsed.get("room")
+        time_str  = parsed.get("time")
+        summary   = parsed.get("summary") or text
+        auto_co   = parsed.get("auto_checkout", False)
+
+        hotel_service.record_note(summary, note_type=category.title() if category else "Other")
+        lines = [f"✅ บันทึก: {summary}"]
+
+        if auto_co and room:
+            checkout_time = datetime.now(TZ)
+            if time_str:
+                try:
+                    t = datetime.strptime(time_str, "%H:%M").time()
+                    checkout_time = checkout_time.replace(
+                        hour=t.hour, minute=t.minute, second=0, microsecond=0
+                    )
+                except ValueError:
+                    pass
+            if room in hotel_service.get_checked_in_rooms():
+                result = hotel_service.record_checkout(room, checkout_time)
+                if "error" not in result:
+                    lines.append(
+                        f"🔄 เช็คเอาท์ห้อง {room} อัตโนมัติ เวลา {checkout_time.strftime('%H:%M')}"
+                    )
+        _reply(event, "\n".join(lines))
     else:
-        _reply(event, "✅ บันทึกเสร็จแล้ว")
+        result = hotel_service.record_note(text, note_type="Other")
+        if "error" in result:
+            _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
+        else:
+            _reply(event, "✅ บันทึกเสร็จแล้ว")
+
     _clear_session(user_id)
 
 
