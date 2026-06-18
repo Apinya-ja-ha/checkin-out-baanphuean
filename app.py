@@ -53,6 +53,9 @@ ADMIN_USER_IDS = set(
 # ── In-memory session management (single worker only!) ──────────────
 user_sessions = {}
 
+# ── Start scheduler on app init ────────────────────────────────────
+scheduler.start_scheduler(app)
+
 
 def _reply(event, text, quick_items=None):
     """Send a reply with optional quick-reply buttons.
@@ -541,9 +544,6 @@ def handle_message(event):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 if __name__ == "__main__":
-    # Start scheduler
-    scheduler.start_scheduler(app)
-
-    # Run Flask
+    # Run Flask (scheduler already started above)
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
