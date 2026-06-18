@@ -156,16 +156,11 @@ def _build_rich_menu_image():
         y1 = y0 + _CH - PAD * 2
         cx = (x0 + x1) // 2
 
-        # Full button background
+        # Full button — single solid color
         draw.rounded_rectangle([x0, y0, x1, y1], radius=R, fill=bg)
 
-        # Header band: darker shade, rounded top + flat bottom
-        hdr_bg = tuple(max(0, c - 55) for c in bg)
-        draw.rounded_rectangle([x0, y0, x1, y0 + BAND + R], radius=R, fill=hdr_bg)
-        draw.rectangle([x0, y0 + BAND, x1, y0 + BAND + R], fill=bg)
-
-        # White separator line
-        draw.rectangle([x0 + 25, y0 + BAND, x1 - 25, y0 + BAND + 3],
+        # Thin white separator between emoji zone and text zone
+        draw.rectangle([x0 + 30, y0 + BAND, x1 - 30, y0 + BAND + 2],
                        fill=(255, 255, 255))
 
         # Emoji centered in header zone
