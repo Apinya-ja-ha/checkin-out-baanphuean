@@ -14,6 +14,7 @@ Features:
 """
 
 import os
+import json
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 
@@ -25,6 +26,7 @@ from linebot.models.messages import TextMessage
 from linebot.models.send_messages import TextSendMessage, ImageSendMessage
 from linebot.models import QuickReply, QuickReplyButton, MessageAction
 from dotenv import load_dotenv
+import requests
 
 from hotel_service import HotelSheetService
 import report as report_module
@@ -55,6 +57,70 @@ user_sessions = {}
 
 # ── Start scheduler on app init ────────────────────────────────────
 scheduler.start_scheduler(app)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RICH MENU SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def setup_rich_menu():
+    """Create Rich Menu with 6 buttons (2x3 layout)."""
+    rich_menu = {
+        "size": {"width": 2, "height": 3},
+        "selected": True,
+        "areas": [
+            {
+                "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/checkin", "label": "เช็คอิน"}
+            },
+            {
+                "bounds": {"x": 1, "y": 0, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/checkout", "label": "เช็คเอาท์"}
+            },
+            {
+                "bounds": {"x": 0, "y": 1, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/changeroom", "label": "เปลี่ยนห้อง"}
+            },
+            {
+                "bounds": {"x": 1, "y": 1, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/other", "label": "อื่นๆ"}
+            },
+            {
+                "bounds": {"x": 0, "y": 2, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/save", "label": "บันทึก"}
+            },
+            {
+                "bounds": {"x": 1, "y": 2, "width": 1, "height": 1},
+                "action": {"type": "message", "text": "/cancel", "label": "ยกเลิก"}
+            }
+        ]
+    }
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(
+            "https://api.line.biz/v1/bot/richmenu",
+            json=rich_menu,
+            headers=headers
+        )
+
+        if response.status_code == 200:
+            menu_id = response.json().get("richMenuId")
+            print(f"✅ Rich Menu created: {menu_id}")
+            return menu_id
+        else:
+            print(f"⚠️  Rich Menu creation failed: {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Rich Menu error: {e}")
+        return None
+
+
+# Initialize Rich Menu on startup
+rich_menu_id = setup_rich_menu()
 
 
 def _reply(event, text, quick_items=None):
@@ -284,6 +350,15 @@ def _show_checkin_confirm(event, user_id, session):
            quick_items=[("ยืนยัน", "confirm_checkin"), ("แก้ไข", "/checkin"), ("ยกเลิก", "/cancel")])
 
 
+def handle_changeroom_command(event, user_id):
+    """Handle /changeroom flow."""
+    session = _get_or_create_session(user_id)
+    session["command"] = "changeroom"
+    session["step"] = "old_room"
+
+    _reply(event, "🏠 ห้องเก่า (ออก) - ห้องหมายเลขเท่าไหร่?")
+
+
 def handle_checkout_command(event, user_id):
     """Handle /checkout flow."""
     session = _get_or_create_session(user_id)
@@ -466,6 +541,29 @@ def handle_message(event):
             _reply(event, "📊 รายงานรวมเดือน (coming soon)")
         elif "/help" in lower_text:
             handle_help_command(event, user_id)
+        elif "/changeroom" in lower_text:
+            handle_changeroom_command(event, user_id)
+        elif "/save" in lower_text:
+            # Save button from Rich Menu - trigger confirm action
+            if current_command == "checkin" and session.get("step") == "confirm":
+                text = "confirm_checkin"
+                # Re-process with confirm text
+                if "confirm_checkin" in text:
+                    data = session.get("data", {})
+                    result = hotel_service.record_checkin(
+                        room_number=data.get("room"),
+                        room_type=data.get("room_type"),
+                        checkin_time=data.get("checkin_time"),
+                        duration_hours=data.get("duration"),
+                        rate_baht=data.get("rate", 0)
+                    )
+                    if "error" in result:
+                        _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
+                    else:
+                        _reply(event, f"✅ บันทึกสำเร็จ ห้อง {result['room']}")
+                    _clear_session(user_id)
+            else:
+                _reply(event, "❌ ไม่มีข้อมูลให้บันทึก")
         elif "/cancel" in lower_text:
             _clear_session(user_id)
             _reply(event, "✓ ยกเลิกแล้ว")
