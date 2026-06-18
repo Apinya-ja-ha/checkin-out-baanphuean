@@ -179,13 +179,13 @@ def _clear_session(user_id):
 #  ROOM LISTS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-ROOMS_SINGLE = [str(100+i) for i in range(1, 15)]   # 101-114 เตียงเดี่ยว/ชั่วคราว
-ROOMS_TWIN   = [str(100+i) for i in range(15, 27)]  # 115-126 เตียงคู่
-ROOM_SPECIAL = ["117"]                               # ห้องพิเศษ 400฿
+ROOMS_SINGLE = [str(100+i) for i in range(1, 15)]              # 101-114 เตียงเดี่ยว/ชั่วคราว
+ROOMS_TWIN   = [str(100+i) for i in range(15, 27) if i != 17]  # 115-126 ยกเว้น 117
+ROOM_SPECIAL = ["117"]                                          # ห้องพิเศษ 400฿
 
 
-def _send_carousel(event, user_id, room_list, prompt="เลือกห้องพัก"):
-    """Send room-selection carousel (3 rooms per card)."""
+def _send_carousel(event, user_id, room_list, prompt="เลือกห้องพัก", with_other=True):
+    """Send room-selection carousel (3 rooms per card) + optional อื่นๆ card."""
     chunks = [room_list[i:i+3] for i in range(0, len(room_list), 3)]
     columns = []
     for chunk in chunks:
@@ -194,7 +194,21 @@ def _send_carousel(event, user_id, room_list, prompt="เลือกห้อ�
             MessageTemplateAction(label=f"ห้อง {r}", text=f"เลือกห้อง {r}")
             for r in chunk
         ]
+        # pad to 3 actions (CarouselColumn requires equal action count across columns)
+        while len(actions) < 3:
+            actions.append(MessageTemplateAction(label=" ", text=f"เลือกห้อง {chunk[0]}"))
         columns.append(CarouselColumn(title="เลือกห้องพัก", text=label, actions=actions))
+
+    if with_other:
+        columns.append(CarouselColumn(
+            title="ระบุเลขห้องเอง",
+            text="กรอกเลขห้องที่ต้องการ",
+            actions=[
+                MessageTemplateAction(label="อื่นๆ (ระบุเอง)", text="เลือกห้อง อื่นๆ"),
+                MessageTemplateAction(label=" ", text="เลือกห้อง อื่นๆ"),
+                MessageTemplateAction(label=" ", text="เลือกห้อง อื่นๆ"),
+            ]
+        ))
 
     msg = TemplateSendMessage(
         alt_text=prompt,
@@ -360,26 +374,49 @@ def handle_checkin_custom_rate_step(event, user_id, text):
 
 def handle_checkin_room_step(event, user_id, text):
     session = _get_or_create_session(user_id)
+    # "อื่นๆ" card tapped → ask for manual input
+    if "อื่นๆ" in text:
+        session["step"] = "custom_room"
+        _reply(event, "🏠 ระบุเลขห้อง (เช่น 101 หรือ 1):")
+        return
     match = re.search(r'(\d{3})', text)
     if not match:
-        _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง")
         return
     session["data"]["room"] = match.group(1)
     session["step"] = "checkin_time"
     _reply(event, f"🕐 เวลาเช็คอินห้อง {match.group(1)}?",
-           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
+
+
+def handle_checkin_custom_room_step(event, user_id, text):
+    """Manual room number input after tapping อื่นๆ card."""
+    session = _get_or_create_session(user_id)
+    room = HotelSheetService._normalize_room(text.strip())
+    try:
+        num = int(room)
+        if not (101 <= num <= 126):
+            _reply(event, "❌ เลขห้องต้องอยู่ระหว่าง 101-126 (หรือ 1-26)")
+            return
+    except ValueError:
+        _reply(event, "❌ ระบุเป็นตัวเลข เช่น 108 หรือ 8")
+        return
+    session["data"]["room"] = room
+    session["step"] = "checkin_time"
+    _reply(event, f"🕐 เวลาเช็คอินห้อง {room}?",
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
 
 
 def handle_checkin_time_step(event, user_id, text):
     session = _get_or_create_session(user_id)
     if "ตอนนี้" in text:
         session["data"]["checkin_time"] = datetime.now(TZ)
-    elif "กำหนดเอง" in text:
+    elif "ระบุเอง" in text:
         session["step"] = "checkin_time_custom"
         _reply(event, "🕐 ระบุเวลาเช็คอิน (HH:MM เช่น 14:30):")
         return
     else:
-        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ กำหนดเอง")
+        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ ระบุเอง")
         return
     session["step"] = "confirm"
     _show_checkin_confirm(event, user_id, session)
@@ -435,19 +472,19 @@ def handle_checkout_room_step(event, user_id, text):
     session["data"]["room"] = match.group(1)
     session["step"] = "checkout_time"
     _reply(event, f"🕐 เวลาเช็คเอาท์ห้อง {match.group(1)}?",
-           quick_items=[("ตอนนี้", "ตอนนี้"), ("เวลาอื่น", "เวลาอื่น")])
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
 
 
 def handle_checkout_time_step(event, user_id, text):
     session = _get_or_create_session(user_id)
     if "ตอนนี้" in text:
         session["data"]["checkout_time"] = datetime.now(TZ)
-    elif "เวลาอื่น" in text:
+    elif "ระบุเอง" in text:
         session["step"] = "checkout_time_custom"
         _reply(event, "🕐 ระบุเวลาเช็คเอาท์ (HH:MM เช่น 16:45):")
         return
     else:
-        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ เวลาอื่น")
+        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ ระบุเอง")
         return
     session["step"] = "confirm"
     _show_checkout_confirm(event, user_id, session)
@@ -649,6 +686,8 @@ def handle_message(event):
             handle_checkin_custom_rate_step(event, user_id, text)
         elif current_step == "room":
             handle_checkin_room_step(event, user_id, text)
+        elif current_step == "custom_room":
+            handle_checkin_custom_room_step(event, user_id, text)
         elif current_step == "checkin_time":
             handle_checkin_time_step(event, user_id, text)
         elif current_step == "checkin_time_custom":
