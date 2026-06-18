@@ -215,7 +215,7 @@ def handle_checkin_type_step(event, user_id, text):
         session["data"]["room_type"] = room_type
         session["step"] = "duration"
         _reply(event, "⏱️  ระยะเวลา?",
-               quick_items=[("2 ชม (180฿)", "2:180"), ("3 ชม (270฿)", "3:270"), ("อื่น", "custom")])
+               quick_items=[("2 ชม (180฿)", "2 ชม (180฿)"), ("3 ชม (270฿)", "3 ชม (270฿)"), ("อื่น", "อื่น")])
     else:
         _reply(event, "❌ โปรดเลือก ค้างคืน หรือ ชั่วคราว")
 
@@ -238,20 +238,20 @@ def handle_checkin_bed_type_step(event, user_id, text):
 
     session["step"] = "checkin_time"
     _reply(event, "🕐 เวลาเช็คอิน?",
-           quick_items=[("ตอนนี้", "now"), ("กำหนดเอง", "custom")])
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
 
 
 def handle_checkin_duration_step(event, user_id, text):
     """Checkin temporary: get duration."""
     session = _get_or_create_session(user_id)
 
-    if "2:180" in text:
+    if "2 ชม" in text:
         session["data"]["duration"] = 2
         session["data"]["rate"] = 180
-    elif "3:270" in text:
+    elif "3 ชม" in text:
         session["data"]["duration"] = 3
         session["data"]["rate"] = 270
-    elif "custom" in text:
+    elif "อื่น" in text:
         session["step"] = "custom_duration"
         _reply(event, "⏱️  ระบุชั่วโมง (เช่น 1.5):")
         return
@@ -261,7 +261,7 @@ def handle_checkin_duration_step(event, user_id, text):
 
     session["step"] = "checkin_time"
     _reply(event, "🕐 เวลาเช็คอิน?",
-           quick_items=[("ตอนนี้", "now"), ("กำหนดเอง", "custom")])
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
 
 
 def handle_checkin_custom_duration_step(event, user_id, text):
@@ -302,9 +302,9 @@ def handle_checkin_time_step(event, user_id, text):
     """Checkin: get check-in time."""
     session = _get_or_create_session(user_id)
 
-    if "now" in text:
+    if "ตอนนี้" in text:
         session["data"]["checkin_time"] = datetime.now(TZ)
-    elif "custom" in text:
+    elif "กำหนดเอง" in text:
         session["step"] = "checkin_time_custom"
         _reply(event, "🕐 เช็คอินเวลา (HH:MM เช่น 14:30):")
         return
@@ -346,7 +346,7 @@ def _show_checkin_confirm(event, user_id, session):
         duration = data.get("duration", "?")
         summary = f"ห้อง: {room}\nประเภท: {room_type}\nระยะเวลา: {duration} ชม\nราคา: {rate}฿\nเวลา: {checkin_time.strftime('%H:%M')}"
 
-    _reply(event, f"✓ ยืนยันข้อมูล:\n\n{summary}",
+    _reply(event, f"✓ ยืนยันข้อมูล:\n\n{summary}\n\nถูกต้องไหม?",
            quick_items=[("ยืนยัน", "confirm_checkin"), ("แก้ไข", "/checkin"), ("ยกเลิก", "/cancel")])
 
 
@@ -381,16 +381,16 @@ def handle_checkout_room_step(event, user_id, text):
     session["step"] = "checkout_time"
 
     _reply(event, "🕐 เช็คเอาท์เวลา?",
-           quick_items=[("ตอนนี้", "now"), ("เวลาอื่น", "custom")])
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("เวลาอื่น", "เวลาอื่น")])
 
 
 def handle_checkout_time_step(event, user_id, text):
     """Checkout: get check-out time."""
     session = _get_or_create_session(user_id)
 
-    if "now" in text:
+    if "ตอนนี้" in text:
         session["data"]["checkout_time"] = datetime.now(TZ)
-    elif "custom" in text:
+    elif "เวลาอื่น" in text:
         session["step"] = "checkout_time_custom"
         _reply(event, "🕐 เช็คเอาท์เวลา (HH:MM เช่น 16:45):")
         return
@@ -420,7 +420,7 @@ def _show_checkout_confirm(event, user_id, session):
     room = data.get("room", "?")
     checkout_time = data.get("checkout_time", datetime.now(TZ))
 
-    _reply(event, f"✓ ยืนยันเช็คเอาท์ ห้อง {room} เวลา {checkout_time.strftime('%H:%M')}?",
+    _reply(event, f"✓ ยืนยันเช็คเอาท์\n\nห้อง: {room}\nเวลา: {checkout_time.strftime('%H:%M')}\n\nถูกต้องไหม?",
            quick_items=[("ยืนยัน", "confirm_checkout"), ("แก้ไข", "/checkout"), ("ยกเลิก", "/cancel")])
 
 
@@ -473,17 +473,15 @@ def handle_week_command(event, user_id):
 
 def handle_help_command(event, user_id):
     """Handle /help."""
-    help_text = """📋 คำสั่ง:
+    help_text = """📋 วิธีใช้งาน:
 
-/checkin    → เช็คอินห้อง
-/checkout   → เช็คเอาท์ห้อง
-/changeroom → เปลี่ยนห้อง
-/other      → บันทึกหมายเหตุ
-/week       → รายงานรายสัปดาห์ (แอดมินเท่านั้น)
-/month      → รายงานรายเดือน (แอดมินเท่านั้น)
-/comonth    → รายงานรวมเดือน (แอดมินเท่านั้น)
-/help       → แสดงคำสั่ง
-/cancel     → ยกเลิกการทำงาน"""
+กดปุ่มเมนูด้านล่างเพื่อ:
+✅ เช็คอิน → บันทึกลูกค้าเข้าห้อง
+❌ เช็คเอาท์ → บันทึกลูกค้าออกห้อง
+🔄 เปลี่ยนห้อง → ย้ายลูกค้าไปห้องอื่น
+📝 อื่นๆ → บันทึกหมายเหตุ / แจ้งทำห้องเสร็จ
+🟢 บันทึก → ยืนยันและบันทึกข้อมูล
+🟢 ยกเลิก → ยกเลิกการทำรายการ"""
     _reply(event, help_text)
 
 
@@ -517,7 +515,7 @@ def handle_message(event):
 
     # ── ID lookup shortcut ─────────────────────────────────────────
     if text.lower() in ["/id", "id", "ไอดี", "ID"]:
-        _reply(event, f"🆔 Your User ID:\n{user_id}")
+        _reply(event, f"🆔 ไอดีของคุณ:\n{user_id}")
         return
 
     # Get current session state
@@ -536,9 +534,9 @@ def handle_message(event):
         elif "/week" in lower_text:
             handle_week_command(event, user_id)
         elif "/month" in lower_text:
-            _reply(event, "📊 รายงานรายเดือน (coming soon)")
+            _reply(event, "📊 รายงานรายเดือน (เร็วๆ นี้)")
         elif "/comonth" in lower_text:
-            _reply(event, "📊 รายงานรวมเดือน (coming soon)")
+            _reply(event, "📊 รายงานรวมเดือน (เร็วๆ นี้)")
         elif "/help" in lower_text:
             handle_help_command(event, user_id)
         elif "/changeroom" in lower_text:
@@ -563,12 +561,12 @@ def handle_message(event):
                         _reply(event, f"✅ บันทึกสำเร็จ ห้อง {result['room']}")
                     _clear_session(user_id)
             else:
-                _reply(event, "❌ ไม่มีข้อมูลให้บันทึก")
+                _reply(event, "❌ ยังไม่มีข้อมูลให้บันทึก\nกรุณาเริ่มจากปุ่ม เช็คอิน / เช็คเอาท์ ก่อน")
         elif "/cancel" in lower_text:
             _clear_session(user_id)
-            _reply(event, "✓ ยกเลิกแล้ว")
+            _reply(event, "✓ ยกเลิกเรียบร้อย")
         else:
-            _reply(event, "❓ คำสั่งไม่รู้จัก ใช้ /help สำหรับรายการคำสั่ง")
+            _reply(event, "❓ ไม่รู้จักคำสั่งนี้ กด ปุ่มเมนูด้านล่าง หรือพิมพ์ /help")
 
     # ── In-session flow ────────────────────────────────────────────
     elif current_command == "checkin":
