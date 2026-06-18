@@ -324,6 +324,26 @@ def _parse_time(text):
         return None
 
 
+def _in_current_shift(hour: int) -> bool:
+    """Return True if the given hour falls within the CURRENT shift.
+
+    กะเช้า: 08:00–16:59  (now.hour 8-16)
+    กะเย็น: 17:00–07:59  (now.hour 17-23 or 0-7)
+    Prevents evening-shift staff from back-dating check-ins to morning shift.
+    """
+    now_hour = datetime.now(TZ).hour
+    in_morning_now = 8 <= now_hour < 17
+    if in_morning_now:
+        return 8 <= hour < 17
+    else:
+        return hour >= 17 or hour < 8
+
+
+def _current_shift_label() -> str:
+    h = datetime.now(TZ).hour
+    return "กะเช้า (08:00–16:59)" if 8 <= h < 17 else "กะเย็น (17:00–07:59)"
+
+
 def _footer_buttons(confirm_text):
     return BoxComponent(
         layout="horizontal",
@@ -616,6 +636,10 @@ def handle_checkin_time_custom_step(event, user_id, text):
     t = _parse_time(text)
     if not t:
         _reply(event, "❌ ระบุเวลาให้ถูกต้อง เช่น 14:30 หรือ 14.30 หรือ 1430")
+        return
+    if not _in_current_shift(t.hour):
+        shift = _current_shift_label()
+        _reply(event, f"⛔ เวลา {t.strftime('%H:%M')} ไม่อยู่ใน{shift}\n\nสามารถบันทึกเช็คอินได้เฉพาะกะปัจจุบันเท่านั้น\n(เช็คเอาท์ข้ามกะทำได้ตามปกติ)")
         return
     now = datetime.now(TZ)
     session["data"]["checkin_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)

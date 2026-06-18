@@ -64,19 +64,10 @@ def send_daily_summary(report_time="5pm"):
 
         msg = TextSendMessage(text=summary_text)
 
-        # Send to hotel staff
+        # Daily report goes to Hotel device ONLY (not admins)
         line_bot_api.push_message(HOTEL_STAFF_USER_ID, msg)
 
-        # Also send to all admins
-        for uid in ADMIN_USER_IDS.split(","):
-            uid = uid.strip()
-            if uid and uid != HOTEL_STAFF_USER_ID:
-                try:
-                    line_bot_api.push_message(uid, msg)
-                except Exception:
-                    pass
-
-        print(f"[OK] Daily {report_time} ({shift_label}) summary sent")
+        print(f"[OK] Daily {report_time} ({shift_label}) summary sent → Hotel device only")
 
     except Exception as e:
         print(f"[ERROR] send_daily_summary({report_time}): {e}")
