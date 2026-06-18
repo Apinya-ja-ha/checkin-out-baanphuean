@@ -47,15 +47,37 @@ class HotelSheetService:
             print(f"❌ Failed to authenticate with Google Sheets: {e}")
             self.sheet = None
 
+    CHECKINS_HEADERS = [
+        "Timestamp(System)", "Room#", "Type(ค้างคืน/ชั่วคราว)",
+        "Check-In Time", "Check-Out Time", "Duration",
+        "Rate(฿)", "Total Cost", "Status", "Notes", ""
+    ]
+    NOTES_HEADERS = [
+        "Timestamp(System)", "Note Text", "Type",
+        "Room#", "Completion Time", "Processed", "Category"
+    ]
+
     def _get_worksheet(self, title):
-        """Get or create a worksheet by title."""
+        """Get or create a worksheet by title, auto-inserting headers if missing."""
         if not self.sheet:
             return None
         try:
-            return self.sheet.worksheet(title)
+            ws = self.sheet.worksheet(title)
         except gspread.exceptions.WorksheetNotFound:
-            # Create if missing
-            return self.sheet.add_worksheet(title=title, rows=1000, cols=20)
+            ws = self.sheet.add_worksheet(title=title, rows=1000, cols=20)
+
+        # Auto-insert headers if missing
+        try:
+            first_row = ws.row_values(1)
+            has_header = first_row and "Timestamp" in str(first_row[0])
+            if not has_header:
+                headers = self.CHECKINS_HEADERS if title == "CheckIns" else self.NOTES_HEADERS
+                ws.insert_row(headers, 1)
+                print(f"[OK] Headers inserted into {title} sheet")
+        except Exception as e:
+            print(f"[WARN] Could not check/insert headers: {e}")
+
+        return ws
 
     def record_checkin(self, room_number, room_type, checkin_time, duration_hours=None,
                        rate_baht=0, special_notes=""):
