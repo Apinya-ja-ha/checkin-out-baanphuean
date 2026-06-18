@@ -372,34 +372,40 @@ def handle_checkin_custom_rate_step(event, user_id, text):
         _reply(event, "❌ ระบุตัวเลข (เช่น 150)")
 
 
+def _parse_room(text):
+    """Extract and normalize room number from any text. Returns '101'-'126' or None."""
+    # Try 3-digit match first (from carousel tap: "เลือกห้อง 101")
+    match = re.search(r'\b(1(?:0[1-9]|1\d|2[0-6]))\b', text)
+    if match:
+        return match.group(1)
+    # Try bare 1-2 digit number (staff typing "1" or "24")
+    bare = re.search(r'\b([1-9]|1\d|2[0-6])\b', text.strip())
+    if bare:
+        return HotelSheetService._normalize_room(bare.group(1))
+    return None
+
+
 def handle_checkin_room_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    # "อื่นๆ" card tapped → ask for manual input
     if "อื่นๆ" in text:
         session["step"] = "custom_room"
-        _reply(event, "🏠 ระบุเลขห้อง (เช่น 101 หรือ 1):")
+        _reply(event, "🏠 ระบุเลขห้อง (1-26 หรือ 101-126):")
         return
-    match = re.search(r'(\d{3})', text)
-    if not match:
-        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง")
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง (1-26 หรือ 101-126)")
         return
-    session["data"]["room"] = match.group(1)
+    session["data"]["room"] = room
     session["step"] = "checkin_time"
-    _reply(event, f"🕐 เวลาเช็คอินห้อง {match.group(1)}?",
+    _reply(event, f"🕐 เวลาเช็คอินห้อง {room}?",
            quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
 
 
 def handle_checkin_custom_room_step(event, user_id, text):
-    """Manual room number input after tapping อื่นๆ card."""
     session = _get_or_create_session(user_id)
-    room = HotelSheetService._normalize_room(text.strip())
-    try:
-        num = int(room)
-        if not (101 <= num <= 126):
-            _reply(event, "❌ เลขห้องต้องอยู่ระหว่าง 101-126 (หรือ 1-26)")
-            return
-    except ValueError:
-        _reply(event, "❌ ระบุเป็นตัวเลข เช่น 108 หรือ 8")
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ ระบุเป็นตัวเลข 1-26 หรือ 101-126 (เช่น 8 หรือ 108)")
         return
     session["data"]["room"] = room
     session["step"] = "checkin_time"
@@ -465,13 +471,13 @@ def handle_checkout_command(event, user_id):
 
 def handle_checkout_room_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    match = re.search(r'(\d{3})', text)
-    if not match:
-        _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง (1-26 หรือ 101-126)")
         return
-    session["data"]["room"] = match.group(1)
+    session["data"]["room"] = room
     session["step"] = "checkout_time"
-    _reply(event, f"🕐 เวลาเช็คเอาท์ห้อง {match.group(1)}?",
+    _reply(event, f"🕐 เวลาเช็คเอาท์ห้อง {room}?",
            quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
 
 
@@ -737,20 +743,19 @@ def handle_message(event):
 
     elif current_command == "changeroom":
         if current_step == "old_room":
-            match = re.search(r'(\d{3})', text)
-            if not match:
-                _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+            room = _parse_room(text)
+            if not room:
+                _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง (1-26 หรือ 101-126)")
                 return
-            session["data"]["old_room"] = match.group(1)
+            session["data"]["old_room"] = room
             session["step"] = "new_room"
             _send_carousel(event, user_id, ROOMS_SINGLE + ROOMS_TWIN, "เลือกห้องใหม่")
         elif current_step == "new_room":
-            match = re.search(r'(\d{3})', text)
-            if not match:
-                _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+            new_room = _parse_room(text)
+            if not new_room:
+                _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง (1-26 หรือ 101-126)")
                 return
             old_room = session["data"]["old_room"]
-            new_room = match.group(1)
             result = hotel_service.record_checkout(old_room, datetime.now(TZ))
             if "error" not in result:
                 _reply(event, f"✅ เปลี่ยนห้องสำเร็จ\n🏠 ออกห้อง {old_room} → เข้าห้อง {new_room}\nกรุณาเช็คอินห้อง {new_room} ด้วย /checkin")
