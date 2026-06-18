@@ -339,6 +339,26 @@ def _current_shift_label() -> str:
     return "กะเช้า (08:00–16:59)" if 8 <= h < 17 else "กะเย็น (17:00–07:59)"
 
 
+def _shift_info(which: str):
+    """Return (label, shift_date) for 'current' or 'previous' shift."""
+    now = datetime.now(TZ)
+    h   = now.hour
+    today     = now.date()
+    yesterday = (now - timedelta(days=1)).date()
+
+    if 8 <= h < 17:
+        cur_label, cur_date = "กะเช้า", today
+        pre_label, pre_date = "กะเย็น", yesterday
+    elif h >= 17:
+        cur_label, cur_date = "กะเย็น", today
+        pre_label, pre_date = "กะเช้า", today
+    else:  # 00–07 → กะเย็น started yesterday
+        cur_label, cur_date = "กะเย็น", yesterday
+        pre_label, pre_date = "กะเช้า", yesterday
+
+    return (cur_label, cur_date) if which == "current" else (pre_label, pre_date)
+
+
 def _footer_buttons(confirm_text):
     return BoxComponent(
         layout="horizontal",
@@ -791,6 +811,7 @@ def handle_other_command(event, user_id):
     _reply(event, "📋 เลือกรายการ:",
            quick_items=[
                ("🧹 แม่บ้าน", "แม่บ้าน"),
+               ("📊 ดูสรุป", "ดูสรุป"),
                ("📖 วิธีใช้", "วิธีใช้"),
                ("🆔 ไอดีของฉัน", "ไอดีของฉัน"),
                ("✏️ บันทึกอื่นๆ", "บันทึกอื่นๆ"),
@@ -808,6 +829,13 @@ def handle_other_submenu_step(event, user_id, text):
             _send_carousel(event, user_id, checked_in, "เลือกห้องที่ทำเสร็จแล้ว", with_other=True)
         else:
             _reply(event, "🏠 ระบุเลขห้องที่ทำเสร็จ (1-26 หรือ 101-126):")
+
+    elif "ดูสรุป" in text:
+        session = _get_or_create_session(user_id)
+        session["command"] = "other"
+        session["step"]    = "shift_summary_choice"
+        _reply(event, "📊 ดูสรุปกะไหน?",
+               quick_items=[("กะตอนนี้", "กะตอนนี้"), ("กะก่อนหน้า", "กะก่อนหน้า")])
 
     elif "วิธีใช้" in text:
         handle_help_command(event, user_id)
@@ -944,6 +972,42 @@ def _ai_process_note(text):
     except Exception as e:
         print(f"[WARN] Claude AI error: {e}")
     return None
+
+
+def handle_shift_summary_step(event, user_id, text):
+    """Show check-in summary for current or previous shift."""
+    which = "current" if "ตอนนี้" in text else "previous"
+    label, shift_date = _shift_info(which)
+    date_str = shift_date.strftime("%d/%m/%Y")
+
+    records = hotel_service.get_shift_checkins(label, shift_date)
+    notes   = hotel_service.get_shift_notes(label, shift_date)
+
+    lines = [f"📊 สรุป{label} ({date_str})", "━━━━━━━━━━━━━━━━━━"]
+
+    if records:
+        still_in  = [r for r in records if "checked-in" in r["status"].lower()]
+        checked_out = [r for r in records if "checked-out" in r["status"].lower()]
+        lines.append(f"ห้องที่บันทึกในกะนี้: {len(records)} ห้อง")
+        lines.append("")
+        for r in records:
+            status_icon = "🔴" if "checked-in" in r["status"].lower() else "✅"
+            rate_str = f" | {r['rate']}฿" if r["rate"] else ""
+            lines.append(f"{status_icon} ห้อง {r['room']} - {r['type']} | {r['checkin_time']}{rate_str}")
+        lines.append("")
+        lines.append(f"🔴 ยังอยู่: {len(still_in)} ห้อง")
+        lines.append(f"✅ Check-out แล้ว: {len(checked_out)} ห้อง")
+    else:
+        lines.append("ไม่มีการบันทึก Check-in ในกะนี้")
+
+    if notes:
+        lines.append("")
+        lines.append(f"📝 หมายเหตุ ({len(notes)} รายการ):")
+        for n in notes:
+            lines.append(f"  • {n}")
+
+    _reply(event, "\n".join(lines))
+    _clear_session(user_id)
 
 
 def handle_other_note_step(event, user_id, text):
@@ -1201,6 +1265,8 @@ def handle_message(event):
     elif current_command == "other":
         if current_step == "note":
             handle_other_note_step(event, user_id, text)
+        elif current_step == "shift_summary_choice":
+            handle_shift_summary_step(event, user_id, text)
         elif current_step == "maid_room":
             handle_maid_room_step(event, user_id, text)
         elif current_step == "maid_room_custom":
@@ -1212,7 +1278,7 @@ def handle_message(event):
 
     elif not current_command:
         # No active session — check if it's a sub-menu reply from อื่นๆ
-        submenu_keys = ["แม่บ้าน", "วิธีใช้", "ไอดีของฉัน", "บันทึกอื่นๆ"]
+        submenu_keys = ["แม่บ้าน", "ดูสรุป", "วิธีใช้", "ไอดีของฉัน", "บันทึกอื่นๆ"]
         if any(k in text for k in submenu_keys):
             handle_other_submenu_step(event, user_id, text)
         else:

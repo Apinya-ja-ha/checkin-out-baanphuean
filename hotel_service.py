@@ -302,6 +302,57 @@ class HotelSheetService:
             print(f"[WARN] get_shift_notes error: {e}")
             return []
 
+    def get_shift_checkins(self, shift_label, shift_date):
+        """Return check-in records saved during a given shift.
+
+        shift_label : 'กะเช้า' or 'กะเย็น'
+        shift_date  : datetime.date (date the shift STARTED)
+        Returns list of dicts: {room, type, checkin_time, rate, status}
+        """
+        if not self.sheet:
+            return []
+        ws = self._get_worksheet("CheckIns")
+        if not ws:
+            return []
+        try:
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+
+            has_header = "Timestamp" in str(all_values[0][0]) if all_values[0] else False
+            start_row = 1 if has_header else 0
+
+            from datetime import timedelta
+            if shift_label == "กะเช้า":
+                dt_from = datetime(shift_date.year, shift_date.month, shift_date.day, 8, 0, tzinfo=TZ)
+                dt_to   = datetime(shift_date.year, shift_date.month, shift_date.day, 17, 0, tzinfo=TZ)
+            else:
+                dt_from = datetime(shift_date.year, shift_date.month, shift_date.day, 17, 0, tzinfo=TZ)
+                next_day = shift_date + timedelta(days=1)
+                dt_to   = datetime(next_day.year, next_day.month, next_day.day, 8, 0, tzinfo=TZ)
+
+            records = []
+            for row in all_values[start_row:]:
+                if not row or not row[0]:
+                    continue
+                try:
+                    ts = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                    if dt_from <= ts < dt_to:
+                        records.append({
+                            "room":         row[1] if len(row) > 1 else "",
+                            "type":         row[2] if len(row) > 2 else "",
+                            "checkin_time": row[3] if len(row) > 3 else "",
+                            "checkout_time":row[4] if len(row) > 4 else "",
+                            "rate":         row[6] if len(row) > 6 else "",
+                            "status":       row[8] if len(row) > 8 else "",
+                        })
+                except (ValueError, IndexError):
+                    continue
+            return records
+        except Exception as e:
+            print(f"[WARN] get_shift_checkins error: {e}")
+            return []
+
     def get_checkin_summary(self, start_date, end_date):
         """Get all check-in records between start_date and end_date.
 
