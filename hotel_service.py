@@ -313,6 +313,32 @@ class HotelSheetService:
             print(f"❌ Error reading CheckIns: {e}")
             return []
 
+    def get_checked_in_rooms(self):
+        """Return list of room numbers currently in 'checked-in' status."""
+        if not self.sheet:
+            return []
+        ws = self._get_worksheet("CheckIns")
+        if not ws:
+            return []
+        try:
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            first_row = all_values[0]
+            has_header = first_row and "Timestamp" in str(first_row[0])
+            start_row = 1 if has_header else 0
+            rooms = []
+            for row in all_values[start_row:]:
+                if len(row) > 8 and row[8] == "checked-in" and row[1]:
+                    room = row[1]
+                    if room not in rooms:
+                        rooms.append(room)
+            rooms.sort()
+            return rooms
+        except Exception as e:
+            print(f"[WARN] get_checked_in_rooms error: {e}")
+            return []
+
     def get_occupancy_stats(self, start_date, end_date):
         """Calculate room occupancy statistics for the date range.
 

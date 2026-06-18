@@ -24,7 +24,12 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models.events import MessageEvent
 from linebot.models.messages import TextMessage
 from linebot.models.send_messages import TextSendMessage, ImageSendMessage
-from linebot.models import QuickReply, QuickReplyButton, MessageAction
+from linebot.models import (
+    QuickReply, QuickReplyButton, MessageAction,
+    TemplateSendMessage, CarouselTemplate, CarouselColumn,
+    MessageTemplateAction
+)
+import re
 from dotenv import load_dotenv
 import requests
 
@@ -171,160 +176,221 @@ def _clear_session(user_id):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  ROOM LISTS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ROOMS_SINGLE = [str(100+i) for i in range(1, 15)]   # 101-114 เตียงเดี่ยว/ชั่วคราว
+ROOMS_TWIN   = [str(100+i) for i in range(15, 27)]  # 115-126 เตียงคู่
+ROOM_SPECIAL = ["117"]                               # ห้องพิเศษ 400฿
+
+
+def _send_carousel(event, user_id, room_list, prompt="เลือกห้องพัก"):
+    """Send room-selection carousel (3 rooms per card)."""
+    chunks = [room_list[i:i+3] for i in range(0, len(room_list), 3)]
+    columns = []
+    for chunk in chunks:
+        label = f"ห้อง {chunk[0]}" if len(chunk) == 1 else f"ห้อง {chunk[0]}–{chunk[-1]}"
+        actions = [
+            MessageTemplateAction(label=f"ห้อง {r}", text=f"เลือกห้อง {r}")
+            for r in chunk
+        ]
+        columns.append(CarouselColumn(title="เลือกห้องพัก", text=label, actions=actions))
+
+    msg = TemplateSendMessage(
+        alt_text=prompt,
+        template=CarouselTemplate(columns=columns)
+    )
+    try:
+        line_bot_api.reply_message(event.reply_token, msg)
+    except Exception:
+        try:
+            line_bot_api.push_message(user_id, msg)
+        except Exception as e:
+            print(f"[WARN] Carousel send error: {e}")
+
+
+def _send_checkout_carousel(event, user_id):
+    """Send carousel showing only checked-in rooms."""
+    checkin_rooms = hotel_service.get_checked_in_rooms()
+    if not checkin_rooms:
+        _reply(event, "ℹ️ ไม่มีห้องที่เช็คอินอยู่ในขณะนี้")
+        return False
+    _send_carousel(event, user_id, checkin_rooms, "เลือกห้องที่ต้องการเช็คเอาท์")
+    return True
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  COMMAND HANDLERS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ── CHECKIN ────────────────────────────────────────────────────────
+
 def handle_checkin_command(event, user_id):
-    """Handle /checkin flow."""
     session = _get_or_create_session(user_id)
     session["command"] = "checkin"
-    session["step"] = "room"
-
-    _reply(event, "📍 ห้องหมายเลขเท่าไหร่? (1-26 หรือ 101-126)")
-
-
-def handle_checkin_room_step(event, user_id, text):
-    """Checkin: get room number."""
-    session = _get_or_create_session(user_id)
-    room_num = text.strip()
-
-    # Validate room number
-    if not HotelSheetService._normalize_room(room_num):
-        _reply(event, "❌ ห้องหมายเลขไม่ถูกต้อง (ใช้ 1-26 หรือ 101-126)")
-        return
-
-    session["data"]["room"] = HotelSheetService._normalize_room(room_num)
     session["step"] = "type"
-
-    _reply(event, "🛏️  ประเภทห้องไหน?",
-           quick_items=[("ค้างคืน", "ค้างคืน"), ("ชั่วคราว", "ชั่วคราว")])
+    _reply(event, "🏨 เช็คอินประเภทไหน?",
+           quick_items=[("ชั่วคราว", "ชั่วคราว"), ("ค้างคืน", "ค้างคืน")])
 
 
 def handle_checkin_type_step(event, user_id, text):
-    """Checkin: get room type."""
     session = _get_or_create_session(user_id)
-
-    if "ค้างคืน" in text:
-        room_type = "ค้างคืน"
-        session["step"] = "bed_type"
-        _reply(event, "🛏️  ประเภทเตียงไหน?",
-               quick_items=[("เตียงเดี่ยว (450฿)", "เดี่ยว"), ("เตียงคู่ (500฿)", "คู่")])
-
-    elif "ชั่วคราว" in text:
-        room_type = "ชั่วคราว"
-        session["data"]["room_type"] = room_type
+    if "ชั่วคราว" in text:
+        session["data"]["room_type"] = "ชั่วคราว"
         session["step"] = "duration"
-        _reply(event, "⏱️  ระยะเวลา?",
-               quick_items=[("2 ชม (180฿)", "2 ชม (180฿)"), ("3 ชม (270฿)", "3 ชม (270฿)"), ("อื่น", "อื่น")])
+        _reply(event, "⏱️ ระยะเวลา?",
+               quick_items=[("2 ชม (180฿)", "2 ชม"), ("3 ชม (210฿)", "3 ชม"), ("อื่น", "อื่น")])
+    elif "ค้างคืน" in text:
+        session["data"]["room_type"] = "ค้างคืน"
+        session["step"] = "nights"
+        _reply(event, "🌙 พักกี่คืน?",
+               quick_items=[("1 คืน", "1 คืน"), ("2 คืน", "2 คืน"), ("อื่น", "อื่น")])
     else:
-        _reply(event, "❌ โปรดเลือก ค้างคืน หรือ ชั่วคราว")
+        _reply(event, "❌ โปรดเลือก ชั่วคราว หรือ ค้างคืน")
+
+
+def handle_checkin_nights_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
+    if "1 คืน" in text:
+        session["data"]["nights"] = 1
+    elif "2 คืน" in text:
+        session["data"]["nights"] = 2
+    elif "อื่น" in text:
+        session["step"] = "custom_nights"
+        _reply(event, "🌙 ระบุจำนวนคืน (เช่น 3):")
+        return
+    else:
+        _reply(event, "❌ โปรดระบุจำนวนคืน")
+        return
+    session["step"] = "bed_type"
+    _reply(event, "🛏️ ประเภทเตียง?",
+           quick_items=[
+               ("เตียงคู่ (500฿)", "เตียงคู่"),
+               ("เตียงเดี่ยว (450฿)", "เตียงเดี่ยว"),
+               ("ห้องพิเศษ (400฿)", "ห้องพิเศษ")
+           ])
+
+
+def handle_checkin_custom_nights_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
+    try:
+        nights = int(text.strip())
+        if nights <= 0:
+            _reply(event, "❌ ระบุมากกว่า 0 คืน")
+            return
+        session["data"]["nights"] = nights
+        session["step"] = "bed_type"
+        _reply(event, "🛏️ ประเภทเตียง?",
+               quick_items=[
+                   ("เตียงคู่ (500฿)", "เตียงคู่"),
+                   ("เตียงเดี่ยว (450฿)", "เตียงเดี่ยว"),
+                   ("ห้องพิเศษ (400฿)", "ห้องพิเศษ")
+               ])
+    except ValueError:
+        _reply(event, "❌ ระบุตัวเลข (เช่น 3)")
 
 
 def handle_checkin_bed_type_step(event, user_id, text):
-    """Checkin overnight: get bed type."""
     session = _get_or_create_session(user_id)
-
-    if "เดี่ยว" in text:
-        session["data"]["bed_type"] = "เตียงเดี่ยว"
-        session["data"]["rate"] = 450
-        session["data"]["room_type"] = "ค้างคืน"
-    elif "คู่" in text:
+    if "เตียงคู่" in text:
         session["data"]["bed_type"] = "เตียงคู่"
         session["data"]["rate"] = 500
-        session["data"]["room_type"] = "ค้างคืน"
+        room_list = ROOMS_TWIN
+    elif "เตียงเดี่ยว" in text:
+        session["data"]["bed_type"] = "เตียงเดี่ยว"
+        session["data"]["rate"] = 450
+        room_list = ROOMS_SINGLE
+    elif "ห้องพิเศษ" in text:
+        session["data"]["bed_type"] = "ห้องพิเศษ"
+        session["data"]["rate"] = 400
+        room_list = ROOM_SPECIAL
     else:
-        _reply(event, "❌ โปรดเลือก เตียงเดี่ยว หรือ เตียงคู่")
+        _reply(event, "❌ โปรดเลือกประเภทเตียง")
         return
-
-    session["step"] = "checkin_time"
-    _reply(event, "🕐 เวลาเช็คอิน?",
-           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
+    session["step"] = "room"
+    _send_carousel(event, user_id, room_list, "เลือกห้องพัก")
 
 
 def handle_checkin_duration_step(event, user_id, text):
-    """Checkin temporary: get duration."""
     session = _get_or_create_session(user_id)
-
     if "2 ชม" in text:
         session["data"]["duration"] = 2
         session["data"]["rate"] = 180
     elif "3 ชม" in text:
         session["data"]["duration"] = 3
-        session["data"]["rate"] = 270
+        session["data"]["rate"] = 210
     elif "อื่น" in text:
         session["step"] = "custom_duration"
-        _reply(event, "⏱️  ระบุชั่วโมง (เช่น 1.5):")
+        _reply(event, "⏱️ ระบุชั่วโมง (เช่น 1.5):")
         return
     else:
-        _reply(event, "❌ โปรดเลือก 2 ชม, 3 ชม, หรือ อื่น")
+        _reply(event, "❌ โปรดเลือกระยะเวลา")
         return
-
-    session["step"] = "checkin_time"
-    _reply(event, "🕐 เวลาเช็คอิน?",
-           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
+    session["step"] = "room"
+    _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก (ชั่วคราว)")
 
 
 def handle_checkin_custom_duration_step(event, user_id, text):
-    """Checkin temporary: get custom hours."""
     session = _get_or_create_session(user_id)
-
     try:
         hours = float(text.strip())
         if hours <= 0:
-            _reply(event, "❌ ระบุเวลามากกว่า 0 ชั่วโมง")
+            _reply(event, "❌ ระบุมากกว่า 0 ชั่วโมง")
             return
         session["data"]["duration"] = hours
         session["step"] = "custom_rate"
-        _reply(event, f"💰 ราคาเท่าไหร่ (เช่น {int(hours * 100)})?")
+        _reply(event, f"💰 ราคาเท่าไหร่?")
     except ValueError:
         _reply(event, "❌ ระบุตัวเลข (เช่น 1.5)")
 
 
 def handle_checkin_custom_rate_step(event, user_id, text):
-    """Checkin temporary: get custom rate."""
     session = _get_or_create_session(user_id)
-
     try:
         rate = int(float(text.strip()))
         if rate <= 0:
             _reply(event, "❌ ราคาต้องมากกว่า 0 บาท")
             return
         session["data"]["rate"] = rate
-        session["data"]["room_type"] = "ชั่วคราว"
-        session["step"] = "checkin_time"
-        _reply(event, "🕐 เวลาเช็คอิน?",
-               quick_items=[("ตอนนี้", "now"), ("กำหนดเอง", "custom")])
+        session["step"] = "room"
+        _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก")
     except ValueError:
         _reply(event, "❌ ระบุตัวเลข (เช่น 150)")
 
 
-def handle_checkin_time_step(event, user_id, text):
-    """Checkin: get check-in time."""
+def handle_checkin_room_step(event, user_id, text):
     session = _get_or_create_session(user_id)
+    match = re.search(r'(\d{3})', text)
+    if not match:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+        return
+    session["data"]["room"] = match.group(1)
+    session["step"] = "checkin_time"
+    _reply(event, f"🕐 เวลาเช็คอินห้อง {match.group(1)}?",
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("กำหนดเอง", "กำหนดเอง")])
 
+
+def handle_checkin_time_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
     if "ตอนนี้" in text:
         session["data"]["checkin_time"] = datetime.now(TZ)
     elif "กำหนดเอง" in text:
         session["step"] = "checkin_time_custom"
-        _reply(event, "🕐 เช็คอินเวลา (HH:MM เช่น 14:30):")
+        _reply(event, "🕐 ระบุเวลาเช็คอิน (HH:MM เช่น 14:30):")
         return
     else:
         _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ กำหนดเอง")
         return
-
     session["step"] = "confirm"
     _show_checkin_confirm(event, user_id, session)
 
 
 def handle_checkin_time_custom_step(event, user_id, text):
-    """Checkin: get custom check-in time."""
     session = _get_or_create_session(user_id)
-
     try:
-        time_obj = datetime.strptime(text.strip(), "%H:%M").time()
+        t = datetime.strptime(text.strip(), "%H:%M").time()
         now = datetime.now(TZ)
-        checkin_time = now.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
-        session["data"]["checkin_time"] = checkin_time
+        session["data"]["checkin_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
         session["step"] = "confirm"
         _show_checkin_confirm(event, user_id, session)
     except ValueError:
@@ -332,82 +398,67 @@ def handle_checkin_time_custom_step(event, user_id, text):
 
 
 def _show_checkin_confirm(event, user_id, session):
-    """Show check-in confirmation."""
     data = session.get("data", {})
     room = data.get("room", "?")
     room_type = data.get("room_type", "?")
     rate = data.get("rate", 0)
-    bed_type = data.get("bed_type", "")
     checkin_time = data.get("checkin_time", datetime.now(TZ))
 
     if room_type == "ค้างคืน":
-        summary = f"ห้อง: {room}\nประเภท: {room_type} ({bed_type})\nราคา: {rate}฿\nเวลา: {checkin_time.strftime('%H:%M')}"
+        bed = data.get("bed_type", "")
+        nights = data.get("nights", 1)
+        summary = f"🏠 ห้อง: {room}\n🛏️ {bed}\n🌙 {nights} คืน\n💰 {rate}฿/คืน\n🕐 เวลา: {checkin_time.strftime('%H:%M')}"
     else:
-        duration = data.get("duration", "?")
-        summary = f"ห้อง: {room}\nประเภท: {room_type}\nระยะเวลา: {duration} ชม\nราคา: {rate}฿\nเวลา: {checkin_time.strftime('%H:%M')}"
+        dur = data.get("duration", "?")
+        summary = f"🏠 ห้อง: {room}\n⏱️ ชั่วคราว {dur} ชม\n💰 {rate}฿\n🕐 เวลา: {checkin_time.strftime('%H:%M')}"
 
-    _reply(event, f"✓ ยืนยันข้อมูล:\n\n{summary}\n\nถูกต้องไหม?",
-           quick_items=[("ยืนยัน", "confirm_checkin"), ("แก้ไข", "/checkin"), ("ยกเลิก", "/cancel")])
+    _reply(event, f"📋 ยืนยันข้อมูล:\n\n{summary}\n\nถูกต้องไหม?",
+           quick_items=[("✅ ยืนยัน", "confirm_checkin"), ("❌ ยกเลิก", "/cancel")])
 
 
-def handle_changeroom_command(event, user_id):
-    """Handle /changeroom flow."""
-    session = _get_or_create_session(user_id)
-    session["command"] = "changeroom"
-    session["step"] = "old_room"
-
-    _reply(event, "🏠 ห้องเก่า (ออก) - ห้องหมายเลขเท่าไหร่?")
-
+# ── CHECKOUT ───────────────────────────────────────────────────────
 
 def handle_checkout_command(event, user_id):
-    """Handle /checkout flow."""
     session = _get_or_create_session(user_id)
     session["command"] = "checkout"
     session["step"] = "room"
-
-    _reply(event, "📍 ห้องหมายเลขเท่าไหร่? (1-26 หรือ 101-126)")
+    if not _send_checkout_carousel(event, user_id):
+        _clear_session(user_id)
 
 
 def handle_checkout_room_step(event, user_id, text):
-    """Checkout: get room number."""
     session = _get_or_create_session(user_id)
-    room_num = text.strip()
-
-    if not HotelSheetService._normalize_room(room_num):
-        _reply(event, "❌ ห้องหมายเลขไม่ถูกต้อง")
+    match = re.search(r'(\d{3})', text)
+    if not match:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
         return
-
-    session["data"]["room"] = HotelSheetService._normalize_room(room_num)
+    session["data"]["room"] = match.group(1)
     session["step"] = "checkout_time"
-
-    _reply(event, "🕐 เช็คเอาท์เวลา?",
+    _reply(event, f"🕐 เวลาเช็คเอาท์ห้อง {match.group(1)}?",
            quick_items=[("ตอนนี้", "ตอนนี้"), ("เวลาอื่น", "เวลาอื่น")])
 
 
 def handle_checkout_time_step(event, user_id, text):
-    """Checkout: get check-out time."""
     session = _get_or_create_session(user_id)
-
     if "ตอนนี้" in text:
         session["data"]["checkout_time"] = datetime.now(TZ)
     elif "เวลาอื่น" in text:
         session["step"] = "checkout_time_custom"
-        _reply(event, "🕐 เช็คเอาท์เวลา (HH:MM เช่น 16:45):")
+        _reply(event, "🕐 ระบุเวลาเช็คเอาท์ (HH:MM เช่น 16:45):")
         return
-
+    else:
+        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ เวลาอื่น")
+        return
     session["step"] = "confirm"
     _show_checkout_confirm(event, user_id, session)
 
 
 def handle_checkout_time_custom_step(event, user_id, text):
-    """Checkout: get custom check-out time."""
     session = _get_or_create_session(user_id)
-
     try:
-        time_obj = datetime.strptime(text.strip(), "%H:%M").time()
+        t = datetime.strptime(text.strip(), "%H:%M").time()
         now = datetime.now(TZ)
-        checkout_time = now.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
-        session["data"]["checkout_time"] = checkout_time
+        session["data"]["checkout_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
         session["step"] = "confirm"
         _show_checkout_confirm(event, user_id, session)
     except ValueError:
@@ -415,13 +466,25 @@ def handle_checkout_time_custom_step(event, user_id, text):
 
 
 def _show_checkout_confirm(event, user_id, session):
-    """Show check-out confirmation."""
     data = session.get("data", {})
     room = data.get("room", "?")
     checkout_time = data.get("checkout_time", datetime.now(TZ))
+    _reply(event, f"📋 ยืนยันเช็คเอาท์\n\n🏠 ห้อง: {room}\n🕐 เวลา: {checkout_time.strftime('%H:%M')}\n\nถูกต้องไหม?",
+           quick_items=[("✅ ยืนยัน", "confirm_checkout"), ("❌ ยกเลิก", "/cancel")])
 
-    _reply(event, f"✓ ยืนยันเช็คเอาท์\n\nห้อง: {room}\nเวลา: {checkout_time.strftime('%H:%M')}\n\nถูกต้องไหม?",
-           quick_items=[("ยืนยัน", "confirm_checkout"), ("แก้ไข", "/checkout"), ("ยกเลิก", "/cancel")])
+
+# ── CHANGEROOM ─────────────────────────────────────────────────────
+
+def handle_changeroom_command(event, user_id):
+    session = _get_or_create_session(user_id)
+    session["command"] = "changeroom"
+    session["step"] = "old_room"
+    checkin_rooms = hotel_service.get_checked_in_rooms()
+    if not checkin_rooms:
+        _reply(event, "ℹ️ ไม่มีห้องที่เช็คอินอยู่ในขณะนี้")
+        _clear_session(user_id)
+        return
+    _send_carousel(event, user_id, checkin_rooms, "เลือกห้องที่ต้องการเปลี่ยน (ห้องเก่า)")
 
 
 def handle_other_command(event, user_id):
@@ -570,10 +633,12 @@ def handle_message(event):
 
     # ── In-session flow ────────────────────────────────────────────
     elif current_command == "checkin":
-        if current_step == "room":
-            handle_checkin_room_step(event, user_id, text)
-        elif current_step == "type":
+        if current_step == "type":
             handle_checkin_type_step(event, user_id, text)
+        elif current_step == "nights":
+            handle_checkin_nights_step(event, user_id, text)
+        elif current_step == "custom_nights":
+            handle_checkin_custom_nights_step(event, user_id, text)
         elif current_step == "bed_type":
             handle_checkin_bed_type_step(event, user_id, text)
         elif current_step == "duration":
@@ -582,26 +647,31 @@ def handle_message(event):
             handle_checkin_custom_duration_step(event, user_id, text)
         elif current_step == "custom_rate":
             handle_checkin_custom_rate_step(event, user_id, text)
+        elif current_step == "room":
+            handle_checkin_room_step(event, user_id, text)
         elif current_step == "checkin_time":
             handle_checkin_time_step(event, user_id, text)
         elif current_step == "checkin_time_custom":
             handle_checkin_time_custom_step(event, user_id, text)
         elif current_step == "confirm":
             if "confirm_checkin" in text:
-                # Save to Sheets
                 data = session.get("data", {})
                 result = hotel_service.record_checkin(
                     room_number=data.get("room"),
                     room_type=data.get("room_type"),
                     checkin_time=data.get("checkin_time"),
                     duration_hours=data.get("duration"),
-                    rate_baht=data.get("rate", 0)
+                    rate_baht=data.get("rate", 0),
+                    special_notes=f"{data.get('bed_type','')} {data.get('nights','')} คืน".strip()
                 )
                 if "error" in result:
                     _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
                 else:
                     _reply(event, f"✅ เช็คอินสำเร็จ ห้อง {result['room']} ({result['rate']}฿)")
                 _clear_session(user_id)
+            elif "/cancel" in text:
+                _clear_session(user_id)
+                _reply(event, "✓ ยกเลิกเรียบร้อย")
 
     elif current_command == "checkout":
         if current_step == "room":
@@ -612,26 +682,48 @@ def handle_message(event):
             handle_checkout_time_custom_step(event, user_id, text)
         elif current_step == "confirm":
             if "confirm_checkout" in text:
-                # Save to Sheets (simplified - assume 1 hour default if not tracked)
                 data = session.get("data", {})
                 result = hotel_service.record_checkout(
                     room_number=data.get("room"),
-                    checkout_time=data.get("checkout_time"),
-                    actual_duration_hours=1.0,  # TODO: calculate from check-in
-                    final_cost=0  # TODO: calculate from check-in
+                    checkout_time=data.get("checkout_time")
                 )
                 if "error" in result:
                     _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
                 else:
                     _reply(event, f"✅ เช็คเอาท์สำเร็จ ห้อง {result['room']}")
                 _clear_session(user_id)
+            elif "/cancel" in text:
+                _clear_session(user_id)
+                _reply(event, "✓ ยกเลิกเรียบร้อย")
+
+    elif current_command == "changeroom":
+        if current_step == "old_room":
+            match = re.search(r'(\d{3})', text)
+            if not match:
+                _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+                return
+            session["data"]["old_room"] = match.group(1)
+            session["step"] = "new_room"
+            _send_carousel(event, user_id, ROOMS_SINGLE + ROOMS_TWIN, "เลือกห้องใหม่")
+        elif current_step == "new_room":
+            match = re.search(r'(\d{3})', text)
+            if not match:
+                _reply(event, "❌ กรุณาเลือกห้องจากเมนูด้านบน")
+                return
+            old_room = session["data"]["old_room"]
+            new_room = match.group(1)
+            result = hotel_service.record_checkout(old_room, datetime.now(TZ))
+            if "error" not in result:
+                _reply(event, f"✅ เปลี่ยนห้องสำเร็จ\n🏠 ออกห้อง {old_room} → เข้าห้อง {new_room}\nกรุณาเช็คอินห้อง {new_room} ด้วย /checkin")
+            else:
+                _reply(event, f"✅ บันทึกเปลี่ยนห้อง {old_room} → {new_room}")
+            _clear_session(user_id)
 
     elif current_command == "other":
         if current_step == "note":
             handle_other_note_step(event, user_id, text)
 
     else:
-        # No active session - just echo/help
         _reply(event, "ใช้ /checkin /checkout /other /week หรือ /help เพื่อเริ่มต้น")
 
 
