@@ -29,6 +29,8 @@ from linebot.models import (
     TemplateSendMessage, CarouselTemplate, CarouselColumn,
     MessageTemplateAction,
     RichMenu, RichMenuArea, RichMenuBounds, RichMenuSize,
+    FlexSendMessage, BubbleContainer,
+    BoxComponent, TextComponent, ButtonComponent, SeparatorComponent,
 )
 import re
 from dotenv import load_dotenv
@@ -229,6 +231,51 @@ def _push(user_id, text, quick_items=None):
         line_bot_api.push_message(user_id, msg)
     except Exception:
         pass
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  FLEX MESSAGE HELPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _reply_flex(event, user_id, alt_text, bubble):
+    msg = FlexSendMessage(alt_text=alt_text, contents=bubble)
+    try:
+        line_bot_api.reply_message(event.reply_token, msg)
+    except Exception:
+        try:
+            line_bot_api.push_message(user_id, msg)
+        except Exception as e:
+            print(f"[WARN] Flex send error: {e}")
+
+
+def _frow(label, value, value_color="#111111"):
+    """Single label-value row for Flex body."""
+    return BoxComponent(
+        layout="horizontal",
+        margin="sm",
+        contents=[
+            TextComponent(text=label, color="#888888", size="sm", flex=4),
+            TextComponent(text=str(value), color=value_color,
+                          weight="bold", size="sm", flex=5, align="end"),
+        ]
+    )
+
+
+def _footer_buttons(confirm_text):
+    return BoxComponent(
+        layout="horizontal",
+        spacing="sm",
+        contents=[
+            ButtonComponent(
+                action=MessageAction(label="ยืนยัน", text=confirm_text),
+                style="primary", color="#27AE60", flex=1, height="sm",
+            ),
+            ButtonComponent(
+                action=MessageAction(label="ยกเลิก", text="/cancel"),
+                style="secondary", flex=1, height="sm",
+            ),
+        ]
+    )
 
 
 def _get_or_create_session(user_id):
@@ -520,16 +567,45 @@ def _show_checkin_confirm(event, user_id, session):
     rate = data.get("rate", 0)
     checkin_time = data.get("checkin_time", datetime.now(TZ))
 
+    rows = [
+        _frow("🏠 ห้อง", room, "#1A73E8"),
+        _frow("📋 ประเภท", room_type),
+    ]
     if room_type == "ค้างคืน":
-        bed = data.get("bed_type", "")
-        nights = data.get("nights", 1)
-        summary = f"🏠 ห้อง: {room}\n🛏️ {bed}\n🌙 {nights} คืน\n💰 {rate}฿/คืน\n🕐 เวลา: {checkin_time.strftime('%H:%M')}"
+        rows += [
+            _frow("🛏️ เตียง", data.get("bed_type", "")),
+            _frow("🌙 จำนวนคืน", f"{data.get('nights', 1)} คืน"),
+            _frow("💰 ราคา", f"{rate:,}฿/คืน", "#E67E22"),
+        ]
     else:
-        dur = data.get("duration", "?")
-        summary = f"🏠 ห้อง: {room}\n⏱️ ชั่วคราว {dur} ชม\n💰 {rate}฿\n🕐 เวลา: {checkin_time.strftime('%H:%M')}"
+        rows += [
+            _frow("⏱️ ระยะเวลา", f"{data.get('duration', '?')} ชม"),
+            _frow("💰 ราคา", f"{rate:,}฿", "#E67E22"),
+        ]
+    rows += [
+        SeparatorComponent(margin="md"),
+        _frow("🕐 เวลาเช็คอิน", checkin_time.strftime("%H:%M"), "#27AE60"),
+    ]
 
-    _reply(event, f"📋 ยืนยันข้อมูล:\n\n{summary}\n\nถูกต้องไหม?",
-           quick_items=[("✅ ยืนยัน", "confirm_checkin"), ("❌ ยกเลิก", "/cancel")])
+    bubble = BubbleContainer(
+        header=BoxComponent(
+            layout="vertical",
+            padding_all="16px",
+            background_color="#1A73E8",
+            contents=[TextComponent(
+                text="ยืนยันเช็คอิน",
+                color="#FFFFFF", weight="bold", size="xl",
+            )],
+        ),
+        body=BoxComponent(
+            layout="vertical", padding_all="16px", contents=rows,
+        ),
+        footer=BoxComponent(
+            layout="vertical", padding_all="12px",
+            contents=[_footer_buttons("confirm_checkin")],
+        ),
+    )
+    _reply_flex(event, user_id, f"ยืนยันเช็คอิน ห้อง {room}", bubble)
 
 
 # ── CHECKOUT ───────────────────────────────────────────────────────
@@ -585,8 +661,30 @@ def _show_checkout_confirm(event, user_id, session):
     data = session.get("data", {})
     room = data.get("room", "?")
     checkout_time = data.get("checkout_time", datetime.now(TZ))
-    _reply(event, f"📋 ยืนยันเช็คเอาท์\n\n🏠 ห้อง: {room}\n🕐 เวลา: {checkout_time.strftime('%H:%M')}\n\nถูกต้องไหม?",
-           quick_items=[("✅ ยืนยัน", "confirm_checkout"), ("❌ ยกเลิก", "/cancel")])
+
+    bubble = BubbleContainer(
+        header=BoxComponent(
+            layout="vertical",
+            padding_all="16px",
+            background_color="#E67E22",
+            contents=[TextComponent(
+                text="ยืนยันเช็คเอาท์",
+                color="#FFFFFF", weight="bold", size="xl",
+            )],
+        ),
+        body=BoxComponent(
+            layout="vertical", padding_all="16px",
+            contents=[
+                _frow("🏠 ห้อง", room, "#E67E22"),
+                _frow("🕐 เวลาเช็คเอาท์", checkout_time.strftime("%H:%M"), "#27AE60"),
+            ],
+        ),
+        footer=BoxComponent(
+            layout="vertical", padding_all="12px",
+            contents=[_footer_buttons("confirm_checkout")],
+        ),
+    )
+    _reply_flex(event, user_id, f"ยืนยันเช็คเอาท์ ห้อง {room}", bubble)
 
 
 # ── CHANGEROOM ─────────────────────────────────────────────────────
