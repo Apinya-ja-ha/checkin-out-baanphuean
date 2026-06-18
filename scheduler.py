@@ -21,50 +21,65 @@ scheduler = BackgroundScheduler(daemon=True, timezone="Asia/Bangkok")
 
 
 def send_daily_summary(report_time="5pm"):
-    """Generate and send daily summary to hotel staff.
+    """Generate and send daily summary to hotel staff + admin.
 
-    Args:
-        report_time: str ("5pm" or "8am")
+    5pm report → covers กะเช้า (08:00-16:59) of today
+    8am report → covers กะเย็น (17:00-07:59) that started yesterday
     """
     try:
-        # Get credentials from environment
         LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-        HOTEL_STAFF_USER_ID = os.getenv("HOTEL_STAFF_USER_ID")
+        HOTEL_STAFF_USER_ID       = os.getenv("HOTEL_STAFF_USER_ID")
+        ADMIN_USER_IDS            = os.getenv("ADMIN_USER_IDS", "")
 
         if not LINE_CHANNEL_ACCESS_TOKEN or not HOTEL_STAFF_USER_ID:
-            print(f"⚠️  Missing LINE config for {report_time} report")
+            print(f"[WARN] Missing LINE config for {report_time} report")
             return
 
-        # Initialize services
-        line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+        line_bot_api  = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
         hotel_service = HotelSheetService()
 
-        # Get data for TODAY (not the whole day, but whatever's been recorded)
-        now = datetime.now(TZ)
+        now   = datetime.now(TZ)
         today = now.date()
 
-        revenue_data = hotel_service.get_daily_revenue(today, today)
-        usage_data = hotel_service.get_usage_count(today, today)
-        occupancy_stats = hotel_service.get_occupancy_stats(today, today)
-        empty_rooms = hotel_service.get_empty_rooms(today, today)
+        # Determine which shift this report covers
+        if report_time == "5pm":
+            shift_label = "กะเช้า"
+            shift_date  = today          # กะเช้า of today
+            data_date   = today
+        else:  # 8am
+            shift_label = "กะเย็น"
+            shift_date  = today - timedelta(days=1)  # กะเย็น started yesterday
+            data_date   = today - timedelta(days=1)
 
-        # Generate text summary
+        revenue_data    = hotel_service.get_daily_revenue(data_date, data_date)
+        usage_data      = hotel_service.get_usage_count(data_date, data_date)
+        occupancy_stats = hotel_service.get_occupancy_stats(data_date, data_date)
+        empty_rooms     = hotel_service.get_empty_rooms(data_date, data_date)
+        shift_notes     = hotel_service.get_shift_notes(shift_label, shift_date)
+
         summary_text = report_module.daily_summary_text(
-            revenue_data,
-            usage_data,
-            occupancy_stats,
-            empty_rooms,
-            report_time=report_time
+            revenue_data, usage_data, occupancy_stats, empty_rooms,
+            report_time=report_time, shift_notes=shift_notes
         )
 
-        # Send to staff
         msg = TextSendMessage(text=summary_text)
+
+        # Send to hotel staff
         line_bot_api.push_message(HOTEL_STAFF_USER_ID, msg)
 
-        print(f"✅ Daily {report_time} summary sent to hotel staff")
+        # Also send to all admins
+        for uid in ADMIN_USER_IDS.split(","):
+            uid = uid.strip()
+            if uid and uid != HOTEL_STAFF_USER_ID:
+                try:
+                    line_bot_api.push_message(uid, msg)
+                except Exception:
+                    pass
+
+        print(f"[OK] Daily {report_time} ({shift_label}) summary sent")
 
     except Exception as e:
-        print(f"❌ Error sending {report_time} summary: {e}")
+        print(f"[ERROR] send_daily_summary({report_time}): {e}")
 
 
 def start_scheduler(app=None):

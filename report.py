@@ -9,31 +9,29 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo("Asia/Bangkok")
 
 
-def daily_summary_text(revenue_data, usage_data, occupancy_stats, empty_rooms, report_time="5pm"):
+def daily_summary_text(revenue_data, usage_data, occupancy_stats, empty_rooms,
+                       report_time="5pm", shift_notes=None):
     """Generate text summary for daily reports (5 PM and 8 AM).
 
     Args:
-        revenue_data: dict with "total", "overnight", "temporary"
-        usage_data: dict with "total", "overnight", "temporary" (counts)
-        occupancy_stats: dict of room stats (room -> {"used": N, "overnight": N, "temporary": N})
-        empty_rooms: list of unused room numbers
-        report_time: str ("5pm" or "8am")
-
-    Returns:
-        str formatted text summary
+        revenue_data  : dict with "total", "overnight", "temporary"
+        usage_data    : dict with "total", "overnight", "temporary" (counts)
+        occupancy_stats: dict room -> {"used": N, "overnight": N, "temporary": N}
+        empty_rooms   : list of unused room numbers
+        report_time   : "5pm" or "8am"
+        shift_notes   : list of note strings for this shift (may be None or [])
     """
     now = datetime.now(TZ)
     date_str = now.strftime("%d/%m/%Y")
+    shift_label = "กะเช้า" if report_time == "5pm" else "กะเย็น"
 
-    # Format occupancy rate
     total_rooms = 26
     used_count = sum(1 for stats in occupancy_stats.values() if stats["used"] > 0)
     occupancy_pct = int((used_count / total_rooms) * 100) if total_rooms > 0 else 0
 
     lines = [
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        f"📊 สรุปประจำวัน ({date_str})",
-        f"   เวลา {report_time.upper()}",
+        f"📊 สรุป{shift_label} ({date_str})",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
         f"💰 รายได้รวม: {revenue_data['total']:,}฿",
@@ -52,6 +50,14 @@ def daily_summary_text(revenue_data, usage_data, occupancy_stats, empty_rooms, r
         lines.append(f"⚠️  ห้องว่าง ({len(empty_rooms)} ห้อง): {', '.join(empty_rooms)}")
     else:
         lines.append("✅ ไม่มีห้องว่าง")
+
+    # ── Shift notes ────────────────────────────────────────────────
+    if shift_notes:
+        lines += ["", f"📝 หมายเหตุ{shift_label} ({len(shift_notes)} รายการ):"]
+        for i, note in enumerate(shift_notes, 1):
+            lines.append(f"   {i}. {note}")
+    else:
+        lines += ["", f"📝 หมายเหตุ{shift_label}: ไม่มี"]
 
     return "\n".join(lines)
 

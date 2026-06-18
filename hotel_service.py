@@ -74,8 +74,14 @@ class HotelSheetService:
     ]
     NOTES_HEADERS = [
         "Timestamp(System)", "Note Text", "Type",
-        "Room#", "Completion Time", "Processed", "Category"
+        "Room#", "Completion Time", "Processed", "Category", "Shift"
     ]
+
+    @staticmethod
+    def _current_shift():
+        """Return 'กะเช้า' (08-16) or 'กะเย็น' (17-07)."""
+        h = datetime.now(TZ).hour
+        return "กะเช้า" if 8 <= h < 17 else "กะเย็น"
 
     def _get_worksheet(self, title):
         """Get or create a worksheet by title, auto-inserting headers if missing."""
@@ -236,7 +242,8 @@ class HotelSheetService:
             room_num or "",                      # D: Room# (if applicable)
             completion_time or "",               # E: Completion time (if room complete)
             "N",                                 # F: Processed
-            ""                                   # G: Category
+            "",                                  # G: Category
+            self._current_shift(),               # H: Shift (กะเช้า/กะเย็น)
         ]
 
         try:
@@ -248,6 +255,52 @@ class HotelSheetService:
             }
         except Exception as e:
             return {"error": str(e)}
+
+    def get_shift_notes(self, shift_label, shift_date):
+        """Return all note texts for a given shift on a given date.
+
+        shift_label : 'กะเช้า' or 'กะเย็น'
+        shift_date  : datetime.date  (the calendar date the shift STARTS on)
+                      กะเช้า  = shift_date 08:00-16:59
+                      กะเย็น  = shift_date 17:00 – shift_date+1 07:59
+        """
+        if not self.sheet:
+            return []
+        ws = self._get_worksheet("Notes")
+        if not ws:
+            return []
+        try:
+            all_rows = ws.get_all_values()
+            if not all_rows:
+                return []
+            has_header = "Timestamp" in str(all_rows[0][0])
+            start_row = 1 if has_header else 0
+
+            from datetime import timedelta
+            if shift_label == "กะเช้า":
+                dt_from = datetime(shift_date.year, shift_date.month, shift_date.day, 8, 0, tzinfo=TZ)
+                dt_to   = datetime(shift_date.year, shift_date.month, shift_date.day, 17, 0, tzinfo=TZ)
+            else:  # กะเย็น
+                dt_from = datetime(shift_date.year, shift_date.month, shift_date.day, 17, 0, tzinfo=TZ)
+                next_day = shift_date + timedelta(days=1)
+                dt_to   = datetime(next_day.year, next_day.month, next_day.day, 8, 0, tzinfo=TZ)
+
+            notes = []
+            for row in all_rows[start_row:]:
+                if not row or not row[0]:
+                    continue
+                try:
+                    ts = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                    if dt_from <= ts < dt_to:
+                        note_text = row[1] if len(row) > 1 else ""
+                        if note_text:
+                            notes.append(note_text)
+                except (ValueError, IndexError):
+                    continue
+            return notes
+        except Exception as e:
+            print(f"[WARN] get_shift_notes error: {e}")
+            return []
 
     def get_checkin_summary(self, start_date, end_date):
         """Get all check-in records between start_date and end_date.
