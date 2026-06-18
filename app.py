@@ -261,6 +261,20 @@ def _frow(label, value, value_color="#111111"):
     )
 
 
+def _parse_time(text):
+    """Parse time string flexibly. Accepts 09:57 / 09.57 / 0957 / 957.
+    Returns datetime.time or None."""
+    s = text.strip().replace(".", ":").replace(" ", "")
+    # bare 3-4 digits e.g. 957 → 09:57, 1430 → 14:30
+    if re.fullmatch(r'\d{3,4}', s):
+        s = s.zfill(4)
+        s = f"{s[:2]}:{s[2:]}"
+    try:
+        return datetime.strptime(s, "%H:%M").time()
+    except ValueError:
+        return None
+
+
 def _footer_buttons(confirm_text):
     return BoxComponent(
         layout="horizontal",
@@ -550,14 +564,14 @@ def handle_checkin_time_step(event, user_id, text):
 
 def handle_checkin_time_custom_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    try:
-        t = datetime.strptime(text.strip(), "%H:%M").time()
-        now = datetime.now(TZ)
-        session["data"]["checkin_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
-        session["step"] = "confirm"
-        _show_checkin_confirm(event, user_id, session)
-    except ValueError:
-        _reply(event, "❌ ใช้รูปแบบ HH:MM (เช่น 14:30)")
+    t = _parse_time(text)
+    if not t:
+        _reply(event, "❌ ระบุเวลาให้ถูกต้อง เช่น 14:30 หรือ 14.30 หรือ 1430")
+        return
+    now = datetime.now(TZ)
+    session["data"]["checkin_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+    session["step"] = "confirm"
+    _show_checkin_confirm(event, user_id, session)
 
 
 def _show_checkin_confirm(event, user_id, session):
@@ -647,14 +661,14 @@ def handle_checkout_time_step(event, user_id, text):
 
 def handle_checkout_time_custom_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    try:
-        t = datetime.strptime(text.strip(), "%H:%M").time()
-        now = datetime.now(TZ)
-        session["data"]["checkout_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
-        session["step"] = "confirm"
-        _show_checkout_confirm(event, user_id, session)
-    except ValueError:
-        _reply(event, "❌ ใช้รูปแบบ HH:MM")
+    t = _parse_time(text)
+    if not t:
+        _reply(event, "❌ ระบุเวลาให้ถูกต้อง เช่น 16:45 หรือ 16.45 หรือ 1645")
+        return
+    now = datetime.now(TZ)
+    session["data"]["checkout_time"] = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+    session["step"] = "confirm"
+    _show_checkout_confirm(event, user_id, session)
 
 
 def _show_checkout_confirm(event, user_id, session):
@@ -793,13 +807,13 @@ def handle_maid_time_step(event, user_id, text):
 def handle_maid_time_custom_step(event, user_id, text):
     session = _get_or_create_session(user_id)
     room = session["data"].get("maid_room", "?")
-    try:
-        t = datetime.strptime(text.strip(), "%H:%M").time()
-        now = datetime.now(TZ)
-        done_time = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
-        _save_maid_record(event, user_id, room, done_time)
-    except ValueError:
-        _reply(event, "❌ ใช้รูปแบบ HH:MM (เช่น 10:30)")
+    t = _parse_time(text)
+    if not t:
+        _reply(event, "❌ ระบุเวลาให้ถูกต้อง เช่น 10:30 หรือ 10.30 หรือ 1030")
+        return
+    now = datetime.now(TZ)
+    done_time = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+    _save_maid_record(event, user_id, room, done_time)
 
 
 def _save_maid_record(event, user_id, room, done_time):
