@@ -74,6 +74,9 @@ scheduler.start_scheduler(app)
 _FONT_CACHE = "/tmp/NotoSansThai-Bold.ttf"
 _FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansThai/NotoSansThai-Bold.ttf"
 
+_EMOJI_FONT_CACHE = "/tmp/NotoEmoji-Regular.ttf"
+_EMOJI_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-emoji@main/fonts/NotoEmoji-Regular.ttf"
+
 _RM_W, _RM_H = 2500, 1686
 _CW, _CH = _RM_W // 2, _RM_H // 3   # 1250 × 562 per cell
 
@@ -93,42 +96,88 @@ def _thai_font(size):
     return None
 
 
+def _emoji_font(size):
+    """NotoEmoji renders emoji as single-color glyphs (white on colored bg looks great)."""
+    try:
+        from PIL import ImageFont
+        if not os.path.exists(_EMOJI_FONT_CACHE):
+            r = requests.get(_EMOJI_FONT_URL, timeout=15)
+            if r.status_code == 200:
+                with open(_EMOJI_FONT_CACHE, "wb") as fh:
+                    fh.write(r.content)
+        if os.path.exists(_EMOJI_FONT_CACHE):
+            return ImageFont.truetype(_EMOJI_FONT_CACHE, size)
+    except Exception as e:
+        print(f"[WARN] Emoji font: {e}")
+    return None
+
+
 def _build_rich_menu_image():
-    """Return BytesIO PNG 2500×1686 with 6 colored buttons."""
+    """Return BytesIO PNG 2500×1686: 6 role-colored buttons, header band + emoji + subtitle."""
     import io
     from PIL import Image, ImageDraw
 
+    # col, row, bg_color, emoji, main_label, subtitle
     CELLS = [
-        (0, 0, (41, 128, 185),  "เช็คอิน"),
-        (1, 0, (41, 128, 185),  "เช็คเอาท์"),
-        (0, 1, (41, 128, 185),  "เปลี่ยนห้อง"),
-        (1, 1, (192, 57,  43),  "อื่นๆ"),
-        (0, 2, (39, 174,  96),  "บันทึก"),
-        (1, 2, (39, 174,  96),  "ยกเลิก"),
+        (0, 0, (39, 174,  96),  "🛎",  "เช็คอิน",     "บันทึกเข้าพัก"),   # Green
+        (1, 0, (192,  57,  43), "🚪",  "เช็คเอาท์",   "บันทึกออก"),        # Red
+        (0, 1, (41,  128, 185), "🔄",  "เปลี่ยนห้อง", "ย้ายห้องพัก"),       # Blue
+        (1, 1, (142,  68, 173), "📝",  "อื่นๆ",        "หมายเหตุ / AI"),     # Purple
+        (0, 2, (22,  160, 133), "💾",  "บันทึก",       "ยืนยัน"),            # Teal
+        (1, 2, (99,  110, 114), "❌",  "ยกเลิก",       "ยกเลิกรายการ"),      # Gray
     ]
-    PAD, RADIUS = 8, 24
 
-    img = Image.new("RGB", (_RM_W, _RM_H), (20, 20, 20))
+    PAD  = 8
+    R    = 28
+    BAND = int(_CH * 0.40)   # header zone ≈ 225px tall
+
+    img  = Image.new("RGB", (_RM_W, _RM_H), (15, 15, 15))
     draw = ImageDraw.Draw(img)
-    font = _thai_font(110)
 
-    for col, row, color, label in CELLS:
+    font_main  = _thai_font(126)
+    font_sub   = _thai_font(62)
+    font_emoji = _emoji_font(96)
+
+    def draw_centered(txt, cx, cy, fnt, fill=(255, 255, 255)):
+        if not fnt:
+            return
+        try:
+            bb = draw.textbbox((0, 0), txt, font=fnt)
+            tw = bb[2] - bb[0]
+            th = bb[3] - bb[1]
+            draw.text((cx - tw // 2, cy - th // 2), txt, fill=fill, font=fnt)
+        except Exception:
+            pass
+
+    for col, row, bg, emoji_ch, main_txt, sub_txt in CELLS:
         x0 = col * _CW + PAD
         y0 = row * _CH + PAD
         x1 = x0 + _CW - PAD * 2
         y1 = y0 + _CH - PAD * 2
-        draw.rounded_rectangle([x0, y0, x1, y1], radius=RADIUS, fill=color)
+        cx = (x0 + x1) // 2
 
-        if font:
-            try:
-                bb = draw.textbbox((0, 0), label, font=font)
-                tw, th = bb[2] - bb[0], bb[3] - bb[1]
-                draw.text(
-                    (col * _CW + (_CW - tw) // 2, row * _CH + (_CH - th) // 2),
-                    label, fill=(255, 255, 255), font=font
-                )
-            except Exception:
-                pass
+        # Full button background
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=R, fill=bg)
+
+        # Header band: darker shade, rounded top + flat bottom
+        hdr_bg = tuple(max(0, c - 55) for c in bg)
+        draw.rounded_rectangle([x0, y0, x1, y0 + BAND + R], radius=R, fill=hdr_bg)
+        draw.rectangle([x0, y0 + BAND, x1, y0 + BAND + R], fill=bg)
+
+        # White separator line
+        draw.rectangle([x0 + 25, y0 + BAND, x1 - 25, y0 + BAND + 3],
+                       fill=(255, 255, 255))
+
+        # Emoji centered in header zone
+        draw_centered(emoji_ch, cx, y0 + BAND // 2, font_emoji)
+
+        # Main Thai text centered in body zone
+        body_top = y0 + BAND + 3
+        body_h   = y1 - body_top
+        draw_centered(main_txt, cx, body_top + body_h // 2 - 30, font_main)
+
+        # Subtitle near bottom of body
+        draw_centered(sub_txt, cx, y1 - 48, font_sub, fill=(230, 230, 230))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
