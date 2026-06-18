@@ -530,25 +530,135 @@ def handle_changeroom_command(event, user_id):
     _send_carousel(event, user_id, checkin_rooms, "เลือกห้องที่ต้องการเปลี่ยน (ห้องเก่า)")
 
 
-def handle_other_command(event, user_id):
-    """Handle /other (free-text notes)."""
-    session = _get_or_create_session(user_id)
-    session["command"] = "other"
-    session["step"] = "note"
+# ── OTHER (sub-menu) ───────────────────────────────────────────────
 
-    _reply(event, "📝 บันทึกอะไร? (เช่น เปิดไฟซ่อมแอร์ ห้อง 105 หรือ ห้อง 108 ทำเสร็จเวลา 10:30)")
+def handle_other_command(event, user_id):
+    """อื่นๆ button → show sub-menu."""
+    _clear_session(user_id)
+    _reply(event, "📋 เลือกรายการ:",
+           quick_items=[
+               ("🧹 แม่บ้าน", "แม่บ้าน"),
+               ("📖 วิธีใช้", "วิธีใช้"),
+               ("🆔 ไอดีของฉัน", "ไอดีของฉัน"),
+               ("✏️ บันทึกอื่นๆ", "บันทึกอื่นๆ"),
+           ])
+
+
+def handle_other_submenu_step(event, user_id, text):
+    """Route after sub-menu selection."""
+    if "แม่บ้าน" in text:
+        session = _get_or_create_session(user_id)
+        session["command"] = "other"
+        session["step"] = "maid_room"
+        checked_in = hotel_service.get_checked_in_rooms()
+        if checked_in:
+            _send_carousel(event, user_id, checked_in, "เลือกห้องที่ทำเสร็จแล้ว", with_other=True)
+        else:
+            _reply(event, "🏠 ระบุเลขห้องที่ทำเสร็จ (1-26 หรือ 101-126):")
+
+    elif "วิธีใช้" in text:
+        handle_help_command(event, user_id)
+
+    elif "ไอดีของฉัน" in text:
+        _reply(event, f"🆔 ไอดีของคุณ:\n{user_id}")
+
+    elif "บันทึกอื่นๆ" in text:
+        session = _get_or_create_session(user_id)
+        session["command"] = "other"
+        session["step"] = "note"
+        _reply(event, "✏️ พิมพ์บันทึก:")
+
+    else:
+        _reply(event, "❌ โปรดเลือกจากเมนูด้านบน")
+
+
+def handle_maid_room_step(event, user_id, text):
+    """Maid: select room that's done."""
+    session = _get_or_create_session(user_id)
+    if "อื่นๆ" in text:
+        session["step"] = "maid_room_custom"
+        _reply(event, "🏠 ระบุเลขห้อง (1-26 หรือ 101-126):")
+        return
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง")
+        return
+    session["data"]["maid_room"] = room
+    session["step"] = "maid_time"
+    _reply(event, f"🕐 ทำห้อง {room} เสร็จเวลาไหน?",
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
+
+
+def handle_maid_room_custom_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ ระบุเลขห้อง 1-26 หรือ 101-126")
+        return
+    session["data"]["maid_room"] = room
+    session["step"] = "maid_time"
+    _reply(event, f"🕐 ทำห้อง {room} เสร็จเวลาไหน?",
+           quick_items=[("ตอนนี้", "ตอนนี้"), ("ระบุเอง", "ระบุเอง")])
+
+
+def handle_maid_time_step(event, user_id, text):
+    """Maid: get completion time."""
+    session = _get_or_create_session(user_id)
+    room = session["data"].get("maid_room", "?")
+
+    if "ตอนนี้" in text:
+        done_time = datetime.now(TZ)
+    elif "ระบุเอง" in text:
+        session["step"] = "maid_time_custom"
+        _reply(event, "🕐 ระบุเวลาที่เสร็จ (HH:MM เช่น 10:30):")
+        return
+    else:
+        _reply(event, "❌ โปรดเลือก ตอนนี้ หรือ ระบุเอง")
+        return
+
+    _save_maid_record(event, user_id, room, done_time)
+
+
+def handle_maid_time_custom_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
+    room = session["data"].get("maid_room", "?")
+    try:
+        t = datetime.strptime(text.strip(), "%H:%M").time()
+        now = datetime.now(TZ)
+        done_time = now.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+        _save_maid_record(event, user_id, room, done_time)
+    except ValueError:
+        _reply(event, "❌ ใช้รูปแบบ HH:MM (เช่น 10:30)")
+
+
+def _save_maid_record(event, user_id, room, done_time):
+    """Save maid completion note; auto-checkout if room still checked-in."""
+    time_str = done_time.strftime("%H:%M")
+    note_text = f"แม่บ้านทำห้อง {room} เสร็จเวลา {time_str}"
+    hotel_service.record_note(note_text, note_type="RoomComplete")
+
+    # Auto-checkout if room is still checked-in
+    checked_in = hotel_service.get_checked_in_rooms()
+    if room in checked_in:
+        result = hotel_service.record_checkout(room, done_time)
+        if "error" not in result:
+            _reply(event, f"✅ บันทึกแม่บ้านห้อง {room} เวลา {time_str}\n"
+                          f"(เช็คเอาท์อัตโนมัติเนื่องจากยังไม่ได้เช็คเอาท์)")
+        else:
+            _reply(event, f"✅ บันทึกแม่บ้านห้อง {room} เวลา {time_str}")
+    else:
+        _reply(event, f"✅ บันทึกแม่บ้านห้อง {room} เวลา {time_str}")
+
+    _clear_session(user_id)
 
 
 def handle_other_note_step(event, user_id, text):
-    """Other: record note."""
-    session = _get_or_create_session(user_id)
-
+    """Free-text note."""
     result = hotel_service.record_note(text, note_type="Other")
     if "error" in result:
         _reply(event, f"❌ เกิดข้อผิดพลาด: {result['error']}")
     else:
-        _reply(event, "✓ บันทึกเสร็จแล้ว")
-
+        _reply(event, "✅ บันทึกเสร็จแล้ว")
     _clear_session(user_id)
 
 
@@ -766,9 +876,22 @@ def handle_message(event):
     elif current_command == "other":
         if current_step == "note":
             handle_other_note_step(event, user_id, text)
+        elif current_step == "maid_room":
+            handle_maid_room_step(event, user_id, text)
+        elif current_step == "maid_room_custom":
+            handle_maid_room_custom_step(event, user_id, text)
+        elif current_step == "maid_time":
+            handle_maid_time_step(event, user_id, text)
+        elif current_step == "maid_time_custom":
+            handle_maid_time_custom_step(event, user_id, text)
 
-    else:
-        _reply(event, "ใช้ /checkin /checkout /other /week หรือ /help เพื่อเริ่มต้น")
+    elif not current_command:
+        # No active session — check if it's a sub-menu reply from อื่นๆ
+        submenu_keys = ["แม่บ้าน", "วิธีใช้", "ไอดีของฉัน", "บันทึกอื่นๆ"]
+        if any(k in text for k in submenu_keys):
+            handle_other_submenu_step(event, user_id, text)
+        else:
+            _reply(event, "ใช้ปุ่มเมนูด้านล่าง หรือพิมพ์ /help")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
