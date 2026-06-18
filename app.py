@@ -27,7 +27,8 @@ from linebot.models.send_messages import TextSendMessage, ImageSendMessage
 from linebot.models import (
     QuickReply, QuickReplyButton, MessageAction,
     TemplateSendMessage, CarouselTemplate, CarouselColumn,
-    MessageTemplateAction
+    MessageTemplateAction,
+    RichMenu, RichMenuArea, RichMenuBounds, RichMenuSize,
 )
 import re
 from dotenv import load_dotenv
@@ -68,59 +69,131 @@ scheduler.start_scheduler(app)
 #  RICH MENU SETUP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def setup_rich_menu():
-    """Create Rich Menu with 6 buttons (2x3 layout)."""
-    rich_menu = {
-        "size": {"width": 2, "height": 3},
-        "selected": True,
-        "areas": [
-            {
-                "bounds": {"x": 0, "y": 0, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/checkin", "label": "เช็คอิน"}
-            },
-            {
-                "bounds": {"x": 1, "y": 0, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/checkout", "label": "เช็คเอาท์"}
-            },
-            {
-                "bounds": {"x": 0, "y": 1, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/changeroom", "label": "เปลี่ยนห้อง"}
-            },
-            {
-                "bounds": {"x": 1, "y": 1, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/other", "label": "อื่นๆ"}
-            },
-            {
-                "bounds": {"x": 0, "y": 2, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/save", "label": "บันทึก"}
-            },
-            {
-                "bounds": {"x": 1, "y": 2, "width": 1, "height": 1},
-                "action": {"type": "message", "text": "/cancel", "label": "ยกเลิก"}
-            }
-        ]
-    }
+_FONT_CACHE = "/tmp/NotoSansThai-Bold.ttf"
+_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSansThai/NotoSansThai-Bold.ttf"
 
+_RM_W, _RM_H = 2500, 1686
+_CW, _CH = _RM_W // 2, _RM_H // 3   # 1250 × 562 per cell
+
+
+def _thai_font(size):
     try:
-        headers = {
-            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        response = requests.post(
-            "https://api.line.biz/v1/bot/richmenu",
-            json=rich_menu,
-            headers=headers
+        from PIL import ImageFont
+        if not os.path.exists(_FONT_CACHE):
+            r = requests.get(_FONT_URL, timeout=10)
+            if r.status_code == 200:
+                with open(_FONT_CACHE, "wb") as fh:
+                    fh.write(r.content)
+        if os.path.exists(_FONT_CACHE):
+            return ImageFont.truetype(_FONT_CACHE, size)
+    except Exception:
+        pass
+    return None
+
+
+def _build_rich_menu_image():
+    """Return BytesIO PNG 2500×1686 with 6 colored buttons."""
+    import io
+    from PIL import Image, ImageDraw
+
+    CELLS = [
+        (0, 0, (41, 128, 185),  "เช็คอิน"),
+        (1, 0, (41, 128, 185),  "เช็คเอาท์"),
+        (0, 1, (41, 128, 185),  "เปลี่ยนห้อง"),
+        (1, 1, (192, 57,  43),  "อื่นๆ"),
+        (0, 2, (39, 174,  96),  "บันทึก"),
+        (1, 2, (39, 174,  96),  "ยกเลิก"),
+    ]
+    PAD, RADIUS = 8, 24
+
+    img = Image.new("RGB", (_RM_W, _RM_H), (20, 20, 20))
+    draw = ImageDraw.Draw(img)
+    font = _thai_font(110)
+
+    for col, row, color, label in CELLS:
+        x0 = col * _CW + PAD
+        y0 = row * _CH + PAD
+        x1 = x0 + _CW - PAD * 2
+        y1 = y0 + _CH - PAD * 2
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=RADIUS, fill=color)
+
+        if font:
+            try:
+                bb = draw.textbbox((0, 0), label, font=font)
+                tw, th = bb[2] - bb[0], bb[3] - bb[1]
+                draw.text(
+                    (col * _CW + (_CW - tw) // 2, row * _CH + (_CH - th) // 2),
+                    label, fill=(255, 255, 255), font=font
+                )
+            except Exception:
+                pass
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
+def setup_rich_menu():
+    """Create 2×3 Rich Menu, upload image, set as default for all users."""
+    if not line_bot_api:
+        return None
+    try:
+        # Remove old menus to stay under the 10-menu limit
+        try:
+            for m in line_bot_api.get_rich_menu_list():
+                line_bot_api.delete_rich_menu(m.rich_menu_id)
+        except Exception:
+            pass
+
+        menu = RichMenu(
+            size=RichMenuSize(width=_RM_W, height=_RM_H),
+            selected=True,
+            name="BaanPhuean",
+            chat_bar_text="เมนู",
+            areas=[
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=0,    y=0,       width=_CW, height=_CH),
+                    action=MessageAction(label="เช็คอิน",    text="/checkin")
+                ),
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=_CW,  y=0,       width=_CW, height=_CH),
+                    action=MessageAction(label="เช็คเอาท์", text="/checkout")
+                ),
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=0,    y=_CH,     width=_CW, height=_CH),
+                    action=MessageAction(label="เปลี่ยนห้อง", text="/changeroom")
+                ),
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=_CW,  y=_CH,     width=_CW, height=_CH),
+                    action=MessageAction(label="อื่นๆ",     text="/other")
+                ),
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=0,    y=_CH * 2, width=_CW, height=_CH),
+                    action=MessageAction(label="บันทึก",    text="/save")
+                ),
+                RichMenuArea(
+                    bounds=RichMenuBounds(x=_CW,  y=_CH * 2, width=_CW, height=_CH),
+                    action=MessageAction(label="ยกเลิก",    text="/cancel")
+                ),
+            ]
         )
 
-        if response.status_code == 200:
-            menu_id = response.json().get("richMenuId")
-            print(f"✅ Rich Menu created: {menu_id}")
-            return menu_id
-        else:
-            print(f"⚠️  Rich Menu creation failed: {response.text}")
-            return None
+        menu_id = line_bot_api.create_rich_menu(rich_menu=menu)
+        print(f"[OK] Rich Menu created: {menu_id}")
+
+        try:
+            line_bot_api.set_rich_menu_image(menu_id, "image/png", _build_rich_menu_image())
+            print("[OK] Rich Menu image uploaded")
+        except Exception as img_err:
+            print(f"[WARN] Rich Menu image upload failed: {img_err}")
+
+        line_bot_api.set_default_rich_menu(menu_id)
+        print("[OK] Rich Menu set as default")
+        return menu_id
+
     except Exception as e:
-        print(f"❌ Rich Menu error: {e}")
+        print(f"[WARN] Rich Menu setup failed: {e}")
         return None
 
 
