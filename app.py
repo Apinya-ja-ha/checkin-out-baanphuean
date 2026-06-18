@@ -471,7 +471,7 @@ def handle_checkin_type_step(event, user_id, text):
         session["data"]["room_type"] = "ชั่วคราว"
         session["step"] = "duration"
         _reply(event, "⏱️ ระยะเวลา?",
-               quick_items=[("2 ชม (180฿)", "2 ชม"), ("3 ชม (210฿)", "3 ชม"), ("อื่น", "อื่น")])
+               quick_items=[("2 ชม (180฿)", "2 ชม"), ("3 ชม (270฿)", "3 ชม"), ("อื่น", "อื่น")])
     elif "ค้างคืน" in text:
         session["data"]["room_type"] = "ค้างคืน"
         session["step"] = "nights"
@@ -550,7 +550,7 @@ def handle_checkin_duration_step(event, user_id, text):
         session["data"]["rate"] = 180
     elif "3 ชม" in text:
         session["data"]["duration"] = 3
-        session["data"]["rate"] = 210
+        session["data"]["rate"] = 270
     elif "อื่น" in text:
         session["step"] = "custom_duration"
         _reply(event, "⏱️ ระบุชั่วโมง (เช่น 1.5):")
