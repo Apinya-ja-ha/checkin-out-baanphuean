@@ -127,16 +127,14 @@ def _build_rich_menu_image():
         (1, 2, (99,  110, 114), "❌",  "ยกเลิก",       "ยกเลิกรายการ"),      # Gray
     ]
 
-    PAD  = 8
-    R    = 28
-    BAND = int(_CH * 0.40)   # header zone ≈ 225px tall
+    PAD = 8
+    R   = 28
 
     img  = Image.new("RGB", (_RM_W, _RM_H), (15, 15, 15))
     draw = ImageDraw.Draw(img)
 
-    font_main  = _thai_font(126)
-    font_sub   = _thai_font(62)
-    font_emoji = _emoji_font(96)
+    font_main = _thai_font(130)
+    font_sub  = _thai_font(64)
 
     def draw_centered(txt, cx, cy, fnt, fill=(255, 255, 255)):
         if not fnt:
@@ -149,30 +147,22 @@ def _build_rich_menu_image():
         except Exception:
             pass
 
-    for col, row, bg, emoji_ch, main_txt, sub_txt in CELLS:
+    for col, row, bg, _emoji, main_txt, sub_txt in CELLS:
         x0 = col * _CW + PAD
         y0 = row * _CH + PAD
         x1 = x0 + _CW - PAD * 2
         y1 = y0 + _CH - PAD * 2
         cx = (x0 + x1) // 2
+        cy = (y0 + y1) // 2
 
-        # Full button — single solid color
+        # Solid color button
         draw.rounded_rectangle([x0, y0, x1, y1], radius=R, fill=bg)
 
-        # Thin white separator between emoji zone and text zone
-        draw.rectangle([x0 + 30, y0 + BAND, x1 - 30, y0 + BAND + 2],
-                       fill=(255, 255, 255))
+        # Main text slightly above center
+        draw_centered(main_txt, cx, cy - 38, font_main)
 
-        # Emoji centered in header zone
-        draw_centered(emoji_ch, cx, y0 + BAND // 2, font_emoji)
-
-        # Main Thai text centered in body zone
-        body_top = y0 + BAND + 3
-        body_h   = y1 - body_top
-        draw_centered(main_txt, cx, body_top + body_h // 2 - 30, font_main)
-
-        # Subtitle near bottom of body
-        draw_centered(sub_txt, cx, y1 - 48, font_sub, fill=(230, 230, 230))
+        # Subtitle below main text
+        draw_centered(sub_txt, cx, cy + 52, font_sub, fill=(230, 230, 230))
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
