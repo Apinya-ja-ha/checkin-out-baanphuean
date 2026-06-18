@@ -471,7 +471,8 @@ def handle_checkin_type_step(event, user_id, text):
         session["data"]["room_type"] = "ชั่วคราว"
         session["step"] = "duration"
         _reply(event, "⏱️ ระยะเวลา?",
-               quick_items=[("2 ชม (180฿)", "2 ชม"), ("3 ชม (270฿)", "3 ชม"), ("อื่น", "อื่น")])
+               quick_items=[("1 ชม (90฿)", "1 ชม"), ("2 ชม (180฿)", "2 ชม"),
+                            ("ต่อชั่วโมง", "ต่อชั่วโมง"), ("อื่น", "อื่น")])
     elif "ค้างคืน" in text:
         session["data"]["room_type"] = "ค้างคืน"
         session["step"] = "nights"
@@ -545,12 +546,21 @@ def handle_checkin_bed_type_step(event, user_id, text):
 
 def handle_checkin_duration_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    if "2 ชม" in text:
+    if "1 ชม" in text:
+        session["data"]["duration"] = 1
+        session["data"]["rate"] = 90
+    elif "2 ชม" in text:
         session["data"]["duration"] = 2
         session["data"]["rate"] = 180
-    elif "3 ชม" in text:
-        session["data"]["duration"] = 3
-        session["data"]["rate"] = 270
+    elif "ต่อชั่วโมง" in text:
+        session["step"] = "extend_room"
+        checked_in = hotel_service.get_checked_in_rooms()
+        if checked_in:
+            _send_carousel(event, user_id, checked_in,
+                           "เลือกห้องที่ต้องการต่อชั่วโมง", with_other=False)
+        else:
+            _reply(event, "❌ ไม่มีห้องที่เช็คอินอยู่ขณะนี้")
+        return
     elif "อื่น" in text:
         session["step"] = "custom_duration"
         _reply(event, "⏱️ ระบุชั่วโมง (เช่น 1.5):")
@@ -588,6 +598,65 @@ def handle_checkin_custom_rate_step(event, user_id, text):
         _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก")
     except ValueError:
         _reply(event, "❌ ระบุตัวเลข (เช่น 150)")
+
+
+# ── EXTEND HOURS FLOW ──────────────────────────────────────────────
+
+def handle_extend_room_step(event, user_id, text):
+    """ต่อชั่วโมง: select room."""
+    session = _get_or_create_session(user_id)
+    room = _parse_room(text)
+    if not room:
+        _reply(event, "❌ กรุณาเลือกห้องจากเมนู หรือพิมพ์เลขห้อง")
+        return
+    session["data"]["extend_room"] = room
+    session["step"] = "extend_hours"
+    _reply(event, f"🕐 ห้อง {room} ต่อกี่ชั่วโมง? (ชั่วโมงละ 90฿)",
+           quick_items=[("1 ชม (90฿)", "ext_1"), ("2 ชม (180฿)", "ext_2"),
+                        ("3 ชม (270฿)", "ext_3"), ("ระบุเอง", "ext_custom")])
+
+
+def handle_extend_hours_step(event, user_id, text):
+    """ต่อชั่วโมง: receive hour selection."""
+    session = _get_or_create_session(user_id)
+    room = session["data"].get("extend_room", "?")
+
+    if text == "ext_custom":
+        session["step"] = "extend_hours_custom"
+        _reply(event, "⏱️ ต่อกี่ชั่วโมง? (เช่น 1, 2, 1.5):")
+        return
+
+    # Quick reply values ext_1 / ext_2 / ext_3
+    hour_map = {"ext_1": 1, "ext_2": 2, "ext_3": 3}
+    hours = hour_map.get(text)
+    if hours is None:
+        _reply(event, "❌ โปรดเลือกจากตัวเลือก")
+        return
+    _save_extension(event, user_id, room, hours)
+
+
+def handle_extend_hours_custom_step(event, user_id, text):
+    """ต่อชั่วโมง: free-type hours."""
+    session = _get_or_create_session(user_id)
+    room = session["data"].get("extend_room", "?")
+    try:
+        hours = float(text.strip())
+        if hours <= 0 or hours > 24:
+            raise ValueError()
+    except (ValueError, TypeError):
+        _reply(event, "❌ ระบุจำนวนชั่วโมง (เช่น 1, 2, 1.5)")
+        return
+    _save_extension(event, user_id, room, hours)
+
+
+def _save_extension(event, user_id, room, hours):
+    """Record hour-extension and reply."""
+    rate = round(hours * 90)
+    hours_str = f"{hours:.0f}" if hours == int(hours) else f"{hours}"
+    note_text = f"ต่อชั่วโมง ห้อง {room} จำนวน {hours_str} ชม ({rate}฿)"
+    hotel_service.record_note(note_text, note_type="Extension")
+    _reply(event, f"✅ บันทึกต่อชั่วโมง\nห้อง {room} | {hours_str} ชม = {rate}฿")
+    _clear_session(user_id)
 
 
 def _parse_room(text):
@@ -1189,6 +1258,12 @@ def handle_message(event):
             handle_checkin_custom_duration_step(event, user_id, text)
         elif current_step == "custom_rate":
             handle_checkin_custom_rate_step(event, user_id, text)
+        elif current_step == "extend_room":
+            handle_extend_room_step(event, user_id, text)
+        elif current_step == "extend_hours":
+            handle_extend_hours_step(event, user_id, text)
+        elif current_step == "extend_hours_custom":
+            handle_extend_hours_custom_step(event, user_id, text)
         elif current_step == "room":
             handle_checkin_room_step(event, user_id, text)
         elif current_step == "custom_room":
