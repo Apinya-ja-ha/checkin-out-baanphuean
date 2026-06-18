@@ -225,19 +225,45 @@ class HotelSheetService:
             return []
 
         try:
-            all_records = ws.get_all_records()
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+
             filtered = []
 
-            for record in all_records:
+            # Check if first row has header or is data
+            first_row = all_values[0]
+            has_header = "Timestamp" in str(first_row[0]) if first_row else False
+            start_row = 1 if has_header else 0
+
+            for row_idx in range(start_row, len(all_values)):
+                row = all_values[row_idx]
+                if not row or not row[0]:
+                    continue
+
                 try:
-                    ts_str = record.get("Timestamp(System)", "")
-                    if not ts_str:
+                    ts_str = row[0]  # Column A = Timestamp
+                    if not ts_str or "Timestamp" in ts_str:
                         continue
+
                     ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ).date()
 
                     if start_date <= ts <= end_date:
+                        # Convert to dict for compatibility
+                        record = {
+                            "Timestamp(System)": row[0] if len(row) > 0 else "",
+                            "Room#": row[1] if len(row) > 1 else "",
+                            "Type(ค้างคืน/ชั่วคราว)": row[2] if len(row) > 2 else "",
+                            "Check-In Time": row[3] if len(row) > 3 else "",
+                            "Check-Out Time": row[4] if len(row) > 4 else "",
+                            "Duration": row[5] if len(row) > 5 else "",
+                            "Rate(฿)": row[6] if len(row) > 6 else "",
+                            "Total Cost": row[7] if len(row) > 7 else "",
+                            "Status": row[8] if len(row) > 8 else "",
+                            "Notes": row[9] if len(row) > 9 else "",
+                        }
                         filtered.append(record)
-                except (ValueError, AttributeError):
+                except (ValueError, AttributeError, IndexError):
                     continue
 
             return filtered
