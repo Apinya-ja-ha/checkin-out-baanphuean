@@ -553,7 +553,7 @@ def handle_checkin_duration_step(event, user_id, text):
         return
     elif "อื่น" in text:
         session["step"] = "custom_duration"
-        _reply(event, "⏱️ ระบุชั่วโมง (เช่น 1.5):")
+        _reply(event, "⏱️ ระบุจำนวนชั่วโมง (จำนวนเต็ม เช่น 4):")
         return
     else:
         _reply(event, "❌ โปรดเลือกระยะเวลา")
@@ -564,30 +564,53 @@ def handle_checkin_duration_step(event, user_id, text):
 
 def handle_checkin_custom_duration_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    try:
-        hours = float(text.strip())
-        if hours <= 0:
-            _reply(event, "❌ ระบุมากกว่า 0 ชั่วโมง")
-            return
-        session["data"]["duration"] = hours
-        session["step"] = "custom_rate"
-        _reply(event, f"💰 ราคาเท่าไหร่?")
-    except ValueError:
-        _reply(event, "❌ ระบุตัวเลข (เช่น 1.5)")
+    m = re.search(r'\d+', text.strip())
+    if not m:
+        _reply(event, "❌ ระบุตัวเลขชั่วโมง เช่น พิมพ์ 4")
+        return
+    hours = int(m.group())
+    if hours <= 0:
+        _reply(event, "❌ ระบุมากกว่า 0 ชั่วโมง")
+        return
+    suggested_rate = hours * 90
+    session["data"]["duration"] = hours
+    session["step"] = "custom_rate"
+    _reply(event, f"⏱️ {hours} ชั่วโมง — ราคาแนะนำ {suggested_rate}฿",
+           quick_items=[(f"{suggested_rate}฿", str(suggested_rate)), ("ระบุเอง", "ระบุเอง")])
 
 
 def handle_checkin_custom_rate_step(event, user_id, text):
     session = _get_or_create_session(user_id)
-    try:
-        rate = int(float(text.strip()))
-        if rate <= 0:
-            _reply(event, "❌ ราคาต้องมากกว่า 0 บาท")
-            return
-        session["data"]["rate"] = rate
-        session["step"] = "room"
-        _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก")
-    except ValueError:
-        _reply(event, "❌ ระบุตัวเลข (เช่น 150)")
+    if text.strip() == "ระบุเอง":
+        session["step"] = "manual_rate"
+        _reply(event, "💰 ระบุราคา (บาท):")
+        return
+    m = re.search(r'\d+', text.strip())
+    if not m:
+        _reply(event, "❌ ระบุตัวเลข เช่น 360")
+        return
+    rate = int(m.group())
+    if rate <= 0:
+        _reply(event, "❌ ราคาต้องมากกว่า 0 บาท")
+        return
+    session["data"]["rate"] = rate
+    session["step"] = "room"
+    _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก (ชั่วคราว)")
+
+
+def handle_checkin_manual_rate_step(event, user_id, text):
+    session = _get_or_create_session(user_id)
+    m = re.search(r'\d+', text.strip())
+    if not m:
+        _reply(event, "❌ ระบุตัวเลข เช่น 500")
+        return
+    rate = int(m.group())
+    if rate <= 0:
+        _reply(event, "❌ ราคาต้องมากกว่า 0 บาท")
+        return
+    session["data"]["rate"] = rate
+    session["step"] = "room"
+    _send_carousel(event, user_id, ROOMS_SINGLE, "เลือกห้องพัก (ชั่วคราว)")
 
 
 # ── EXTEND HOURS FLOW ──────────────────────────────────────────────
@@ -1248,6 +1271,8 @@ def handle_message(event):
             handle_checkin_custom_duration_step(event, user_id, text)
         elif current_step == "custom_rate":
             handle_checkin_custom_rate_step(event, user_id, text)
+        elif current_step == "manual_rate":
+            handle_checkin_manual_rate_step(event, user_id, text)
         elif current_step == "extend_room":
             handle_extend_room_step(event, user_id, text)
         elif current_step == "extend_hours":

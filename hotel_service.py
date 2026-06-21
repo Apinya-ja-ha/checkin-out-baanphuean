@@ -183,22 +183,28 @@ class HotelSheetService:
             return {"error": "Could not access CheckIns sheet"}
 
         try:
-            all_rows = ws.get_all_records()
+            # Use get_all_values() to avoid gspread issues with empty/duplicate headers
+            all_rows = ws.get_all_values()
+            if not all_rows:
+                return {"error": f"No open check-in found for room {room_num}"}
 
-            # Find the last unclosed check-in for this room
-            for i in range(len(all_rows) - 1, -1, -1):
-                row = all_rows[i]
-                if row.get("Room#") == room_num and row.get("Status") == "checked-in":
-                    # Found it - update this row
-                    row_index = i + 2  # +1 for header, +1 for 1-indexed
+            has_header = all_rows[0] and "Timestamp" in str(all_rows[0][0])
+            data_rows = all_rows[1:] if has_header else all_rows
+
+            # Find the last unclosed check-in for this room (search bottom-up)
+            # Normalize row[1] when comparing so "7" and "107" both match room_num "107"
+            for i in range(len(data_rows) - 1, -1, -1):
+                row = data_rows[i]
+                # col B (idx 1) = Room#,  col I (idx 8) = Status
+                if len(row) > 8 and self._normalize_room(row[1]) == room_num and row[8] == "checked-in":
+                    row_index = i + (2 if has_header else 1)  # 1-indexed sheet row
 
                     checkout_str = checkout_time.strftime("%Y-%m-%d %H:%M")
 
-                    # Update columns E, F, H, I
-                    ws.update_cell(row_index, 5, checkout_str)  # E: Check-Out Time
+                    ws.update_cell(row_index, 5, checkout_str)                                          # E: Check-Out Time
                     ws.update_cell(row_index, 6, str(actual_duration_hours) if actual_duration_hours else "")  # F: Duration
-                    ws.update_cell(row_index, 8, str(final_cost))  # H: Total Cost
-                    ws.update_cell(row_index, 9, "checked-out")  # I: Status
+                    ws.update_cell(row_index, 8, str(final_cost))                                       # H: Total Cost
+                    ws.update_cell(row_index, 9, "checked-out")                                         # I: Status
 
                     return {
                         "room": room_num,
@@ -207,6 +213,12 @@ class HotelSheetService:
                         "status": "success"
                     }
 
+            # Diagnostic: log what rows exist for this room to Railway logs
+            found_rows = [
+                f"row[1]={r[1]!r} status={r[8]!r}"
+                for r in data_rows if len(r) > 8 and self._normalize_room(r[1]) == room_num
+            ]
+            print(f"[DEBUG] record_checkout: room={room_num}, matching rows={found_rows}")
             return {"error": f"No open check-in found for room {room_num}"}
 
         except Exception as e:
