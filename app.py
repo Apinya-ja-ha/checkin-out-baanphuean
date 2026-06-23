@@ -389,7 +389,7 @@ def _clear_session(user_id):
 
 ROOMS_SINGLE = [str(100+i) for i in range(1, 15)]              # 101-114 เตียงเดี่ยว/ชั่วคราว
 ROOMS_TWIN   = [str(100+i) for i in range(15, 27) if i != 17]  # 115-126 ยกเว้น 117
-ROOM_SPECIAL = ["117"]                                          # ห้องพิเศษ 400฿
+ROOM_SPECIAL = ["117"]                                              # ห้องพิเศษ 400฿
 
 
 def _send_carousel(event, user_id, room_list, prompt="เลือกห้องพัก", with_other=True):
@@ -906,9 +906,10 @@ def handle_other_submenu_step(event, user_id, text):
         session = _get_or_create_session(user_id)
         session["command"] = "other"
         session["step"] = "maid_room"
-        checked_in = hotel_service.get_checked_in_rooms()
-        if checked_in:
-            _send_carousel(event, user_id, checked_in, "เลือกห้องที่ทำเสร็จแล้ว", with_other=True)
+        today = datetime.now(TZ).date()
+        maid_rooms = hotel_service.get_rooms_for_maid_today(today)
+        if maid_rooms:
+            _send_carousel(event, user_id, maid_rooms, "เลือกห้องที่ทำเสร็จแล้ว", with_other=True)
         else:
             _reply(event, "🏠 ระบุเลขห้องที่ทำเสร็จ (1-26 หรือ 101-126):")
 
@@ -1159,17 +1160,73 @@ def handle_week_command(event, user_id):
 
 
 def handle_help_command(event, user_id):
-    """Handle /help."""
+    """Handle /help — shows extra admin section for admins."""
     help_text = """📋 วิธีใช้งาน:
 
 กดปุ่มเมนูด้านล่างเพื่อ:
 ✅ เช็คอิน → บันทึกลูกค้าเข้าห้อง
 ❌ เช็คเอาท์ → บันทึกลูกค้าออกห้อง
 🔄 เปลี่ยนห้อง → ย้ายลูกค้าไปห้องอื่น
-📝 อื่นๆ → บันทึกหมายเหตุ / แจ้งทำห้องเสร็จ
-🟢 บันทึก → ยืนยันและบันทึกข้อมูล
-🟢 ยกเลิก → ยกเลิกการทำรายการ"""
+📝 อื่นๆ → บันทึกหมายเหตุ / แจ้งทำห้องเสร็จ"""
+
+    if user_id in ADMIN_USER_IDS:
+        help_text += """
+
+━━━━━━━━━━━━━━━━━━
+👑 คำสั่งแอดมิน:
+/week   → รายงานรายสัปดาห์ (7 วันล่าสุด)
+/month  → รายงานรายเดือน (เดือนนี้)
+/comonth → รายงานสะสมทั้งหมด
+/ยกเลิก [ห้อง] → ยกเลิก check-in ล่าสุดของห้องนั้น
+/ลบโน้ตล่าสุด → ลบบันทึกล่าสุด (เช่น แม่บ้านกรอกผิด)
+/โน้ตล่าสุด → ดู 3 บันทึกล่าสุด"""
+
     _reply(event, help_text)
+
+
+def handle_admin_last_notes(event, user_id):
+    """Show last 3 notes — admin only."""
+    if user_id not in ADMIN_USER_IDS:
+        _reply(event, "❌ เฉพาะแอดมินเท่านั้น")
+        return
+    notes = hotel_service.get_last_notes(3)
+    if not notes:
+        _reply(event, "📝 ยังไม่มีบันทึก")
+        return
+    lines = ["📝 บันทึก 3 รายการล่าสุด:"]
+    for i, n in enumerate(notes, 1):
+        ts = n["timestamp"][5:16] if len(n["timestamp"]) >= 16 else n["timestamp"]
+        lines.append(f"{i}. [{ts}] {n['text']}")
+    _reply(event, "\n".join(lines))
+
+
+def handle_admin_delete_last_note(event, user_id):
+    """Delete last note — admin only."""
+    if user_id not in ADMIN_USER_IDS:
+        _reply(event, "❌ เฉพาะแอดมินเท่านั้น")
+        return
+    result = hotel_service.delete_last_note()
+    if "error" in result:
+        _reply(event, f"❌ {result['error']}")
+    else:
+        _reply(event, f"🗑️ ลบบันทึกแล้ว:\n\"{result['deleted']}\"")
+
+
+def handle_admin_cancel_checkin(event, user_id, text):
+    """Cancel last checked-in record for a room — admin only. Usage: /ยกเลิก [ห้อง]"""
+    if user_id not in ADMIN_USER_IDS:
+        _reply(event, "❌ เฉพาะแอดมินเท่านั้น")
+        return
+    m = re.search(r'\d+', text)
+    if not m:
+        _reply(event, "❌ ระบุเลขห้อง เช่น /ยกเลิก 122")
+        return
+    result = hotel_service.cancel_last_checkin(m.group())
+    if "error" in result:
+        _reply(event, f"❌ {result['error']}")
+    else:
+        t = result["checkin_time"] or "?"
+        _reply(event, f"✅ ยกเลิก check-in ห้อง {result['room']} (เข้าเวลา {t}) แล้ว")
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1226,6 +1283,12 @@ def handle_message(event):
             _reply(event, "📊 รายงานรวมเดือน (เร็วๆ นี้)")
         elif "/help" in lower_text:
             handle_help_command(event, user_id)
+        elif "/ลบโน้ตล่าสุด" in lower_text:
+            handle_admin_delete_last_note(event, user_id)
+        elif "/โน้ตล่าสุด" in lower_text:
+            handle_admin_last_notes(event, user_id)
+        elif "/ยกเลิก" in lower_text:
+            handle_admin_cancel_checkin(event, user_id, text)
         elif "/changeroom" in lower_text:
             handle_changeroom_command(event, user_id)
         elif "/save" in lower_text:

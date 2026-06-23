@@ -268,6 +268,80 @@ class HotelSheetService:
         except Exception as e:
             return {"error": str(e)}
 
+    def get_last_notes(self, n=3):
+        """Return last N notes from Notes sheet (newest first)."""
+        if not self.sheet:
+            return []
+        ws = self._get_worksheet("Notes")
+        if not ws:
+            return []
+        try:
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            has_header = all_values[0] and "Timestamp" in str(all_values[0][0])
+            data_rows = all_values[1:] if has_header else all_values
+            last_rows = data_rows[-n:] if len(data_rows) >= n else data_rows
+            return [
+                {
+                    "timestamp": row[0] if row else "",
+                    "text":      row[1] if len(row) > 1 else "",
+                    "type":      row[2] if len(row) > 2 else "",
+                    "room":      row[3] if len(row) > 3 else "",
+                }
+                for row in reversed(last_rows)
+            ]
+        except Exception as e:
+            print(f"[WARN] get_last_notes error: {e}")
+            return []
+
+    def delete_last_note(self):
+        """Delete the last row in Notes sheet. Returns deleted note text."""
+        if not self.sheet:
+            return {"error": "Sheet not initialized"}
+        ws = self._get_worksheet("Notes")
+        if not ws:
+            return {"error": "Could not access Notes sheet"}
+        try:
+            all_values = ws.get_all_values()
+            has_header = all_values[0] and "Timestamp" in str(all_values[0][0]) if all_values else False
+            if not all_values or (has_header and len(all_values) < 2):
+                return {"error": "ไม่มีบันทึก"}
+            last_row_index = len(all_values)
+            deleted_text = all_values[-1][1] if len(all_values[-1]) > 1 else "(ไม่มีข้อความ)"
+            ws.delete_rows(last_row_index)
+            return {"deleted": deleted_text, "status": "success"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def cancel_last_checkin(self, room_number):
+        """Mark the last checked-in record for a room as 'cancelled' (admin correction)."""
+        if not self.sheet:
+            return {"error": "Sheet not initialized"}
+        room_num = self._normalize_room(room_number)
+        ws = self._get_worksheet("CheckIns")
+        if not ws:
+            return {"error": "Could not access CheckIns sheet"}
+        try:
+            all_rows = ws.get_all_values()
+            if not all_rows:
+                return {"error": f"ไม่พบ check-in ของห้อง {room_num}"}
+            has_header = all_rows[0] and "Timestamp" in str(all_rows[0][0])
+            data_rows = all_rows[1:] if has_header else all_rows
+            for i in range(len(data_rows) - 1, -1, -1):
+                row = data_rows[i]
+                if len(row) > 8 and self._normalize_room(row[1]) == room_num and row[8] == "checked-in":
+                    row_index = i + (2 if has_header else 1)
+                    ws.update_cell(row_index, 9, "cancelled")
+                    return {
+                        "room":         room_num,
+                        "checkin_time": row[3] if len(row) > 3 else "",
+                        "status":       "success",
+                    }
+            return {"error": f"ไม่พบ check-in ที่ค้างอยู่ของห้อง {room_num}"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def get_shift_notes(self, shift_label, shift_date):
         """Return all note texts for a given shift on a given date.
 
@@ -430,7 +504,7 @@ class HotelSheetService:
             return []
 
     def get_checked_in_rooms(self):
-        """Return list of room numbers currently in 'checked-in' status."""
+        """Return list of room numbers currently in 'checked-in' status (normalized)."""
         if not self.sheet:
             return []
         ws = self._get_worksheet("CheckIns")
@@ -446,13 +520,50 @@ class HotelSheetService:
             rooms = []
             for row in all_values[start_row:]:
                 if len(row) > 8 and row[8] == "checked-in" and row[1]:
-                    room = row[1]
+                    room = self._normalize_room(row[1])
                     if room not in rooms:
                         rooms.append(room)
-            rooms.sort()
+            rooms.sort(key=lambda x: int(x) if x.isdigit() else 0)
             return rooms
         except Exception as e:
             print(f"[WARN] get_checked_in_rooms error: {e}")
+            return []
+
+    def get_rooms_for_maid_today(self, date):
+        """Return all rooms with check-in records on the given date (maid view).
+        Includes checked-in and checked-out rooms. Sorted descending.
+        """
+        if not self.sheet:
+            return []
+        ws = self._get_worksheet("CheckIns")
+        if not ws:
+            return []
+        try:
+            all_values = ws.get_all_values()
+            if not all_values:
+                return []
+            has_header = "Timestamp" in str(all_values[0][0]) if all_values[0] else False
+            start_row = 1 if has_header else 0
+
+            dt_from = datetime(date.year, date.month, date.day, 0, 0, tzinfo=TZ)
+            dt_to   = datetime(date.year, date.month, date.day, 23, 59, 59, tzinfo=TZ)
+
+            rooms = []
+            for row in all_values[start_row:]:
+                if not row or not row[0]:
+                    continue
+                try:
+                    ts = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ)
+                    if dt_from <= ts <= dt_to and len(row) > 1 and row[1]:
+                        room = self._normalize_room(row[1])
+                        if room not in rooms:
+                            rooms.append(room)
+                except (ValueError, IndexError):
+                    continue
+            rooms.sort(key=lambda x: int(x) if x.isdigit() else 0)
+            return rooms
+        except Exception as e:
+            print(f"[WARN] get_rooms_for_maid_today error: {e}")
             return []
 
     def get_occupancy_stats(self, start_date, end_date):
