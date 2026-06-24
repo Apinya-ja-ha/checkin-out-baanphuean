@@ -906,8 +906,7 @@ def handle_other_submenu_step(event, user_id, text):
         session = _get_or_create_session(user_id)
         session["command"] = "other"
         session["step"] = "maid_room"
-        today = datetime.now(TZ).date()
-        maid_rooms = hotel_service.get_rooms_for_maid_today(today)
+        maid_rooms = hotel_service.get_rooms_for_maid_today()
         if maid_rooms:
             _send_carousel(event, user_id, maid_rooms, "เลือกห้องที่ทำเสร็จแล้ว", with_other=True)
         else:

@@ -529,9 +529,9 @@ class HotelSheetService:
             print(f"[WARN] get_checked_in_rooms error: {e}")
             return []
 
-    def get_rooms_for_maid_today(self, date):
-        """Return all rooms with check-in records on the given date (maid view).
-        Includes checked-in and checked-out rooms. Sorted descending.
+    def get_rooms_for_maid_today(self):
+        """Return rooms for the morning maid: covers night shift (yesterday 17:00) + today.
+        Includes both checked-in and checked-out rooms. Sorted ascending.
         """
         if not self.sheet:
             return []
@@ -545,8 +545,11 @@ class HotelSheetService:
             has_header = "Timestamp" in str(all_values[0][0]) if all_values[0] else False
             start_row = 1 if has_header else 0
 
-            dt_from = datetime(date.year, date.month, date.day, 0, 0, tzinfo=TZ)
-            dt_to   = datetime(date.year, date.month, date.day, 23, 59, 59, tzinfo=TZ)
+            now = datetime.now(TZ)
+            yesterday = now.date() - timedelta(days=1)
+            # Night shift starts at 17:00 the previous day → cover that through to now
+            dt_from = datetime(yesterday.year, yesterday.month, yesterday.day, 17, 0, tzinfo=TZ)
+            dt_to   = now
 
             rooms = []
             for row in all_values[start_row:]:
